@@ -1,0 +1,68 @@
+# Two ways to run this.
+#
+#   Against an appliance you already have:
+#     JMFTS_API_URL=http://192.168.1.100:8100 docker compose run --rm presearch check
+#
+#   Self-contained, bringing up Postgres and JMFTS alongside:
+#     docker compose --profile appliance up -d
+#     docker compose run --rm presearch check
+#
+# The registry is a lexical index, so the JMFTS service here installs the base
+# distribution without the model stack. It cannot embed, and does not need to.
+
+services:
+  presearch:
+    build: .
+    image: tau-search/presearch:0.1.0
+    environment:
+      JMFTS_API_URL: ${JMFTS_API_URL:-http://jmfts:8100}
+      JMFTS_API_TOKEN: ${JMFTS_API_TOKEN:-}
+      PRESEARCH_DATA: /data
+    volumes:
+      - presearch-data:/data
+    # A one-shot CLI, not a server: run it with `docker compose run`.
+    profiles: ["cli"]
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${JMFTS_DB_USER:-jmfts}
+      POSTGRES_PASSWORD: ${JMFTS_DB_PASSWORD:-jmfts}
+      POSTGRES_DB: ${JMFTS_DB_NAME:-jmfts}
+    volumes:
+      - jmfts-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${JMFTS_DB_USER:-jmfts}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    profiles: ["appliance"]
+
+  jmfts:
+    image: python:3.12-slim
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      JMFTS_DB_HOST: db
+      JMFTS_DB_USER: ${JMFTS_DB_USER:-jmfts}
+      JMFTS_DB_PASSWORD: ${JMFTS_DB_PASSWORD:-jmfts}
+      JMFTS_DB_NAME: ${JMFTS_DB_NAME:-jmfts}
+      JMFTS_API_TOKEN: ${JMFTS_API_TOKEN:-}
+    command: >
+      bash -lc "pip install --no-cache-dir jmfts &&
+                jmfts-init-db &&
+                jmfts-server --host 0.0.0.0 --port 8100"
+    ports:
+      - "${JMFTS_PORT:-8100}:8100"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8100/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    profiles: ["appliance"]
+
+volumes:
+  presearch-data:
+  jmfts-db:

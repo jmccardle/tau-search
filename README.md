@@ -63,6 +63,74 @@ SEARXNG_URL=http://127.0.0.1:8080 ./venv/bin/python search.py "query"
 # or: --searxng-url http://127.0.0.1:8080
 ```
 
+## presearch — federated search over a JMFTS appliance
+
+`search.py` is **metasearch**: broadcast a query to every backend, merge the
+results. `presearch` is **federated search**: decide *which* sources to ask
+first, and ask those. The difference is a registry — a map from topics to
+sources, which the broker uses for resource selection.
+
+The registry is not a new database. It lives in a
+[JMFTS](https://pypi.org/project/jmfts/) appliance as a held-out corpus:
+topics are a document tree, sources hang beneath them, and facts about a
+source (search endpoint, subreddit, Stack Exchange tag) are triples with
+temporal validity, so a source that moves is superseded rather than
+overwritten.
+
+```sh
+presearch check                                   # appliance reachable?
+presearch fetch curlie                            # 177 MB → 619 MB unpacked
+presearch load curlie --topic-prefix Computers --min-entries 5 --max-depth 4
+presearch discover --topic Computers/Software/Databases/SQLite
+presearch validate                                # still resting on upstream?
+presearch query "sqlite b-tree internals"
+```
+
+### Providers
+
+| name | kind | what it contributes |
+|---|---|---|
+| `curlie` | bulk | live human-edited directory; 801,720 categories, 2,739,037 sites, monthly |
+| `dmoz` | bulk | the 2017 ODP terminal snapshot; pre-2015 forums and newsgroups Curlie pruned |
+| `wikidata` | bulk | *handles*, not homepages — subreddit, SE tag, repo, bug tracker |
+| `marginalia` | discovery | no dump; queried per-topic to harvest candidate domains |
+
+The bulk/discovery split is load-bearing. Bulk providers populate a registry
+from nothing. Discovery providers extend one that already has a taxonomy —
+which is how the registry self-populates from its own fallback tier: the
+broker misses, the open web answers, the answer becomes a registered source.
+Candidates are never auto-trusted; `--accept` is the curation gate.
+
+### Validation
+
+Every load writes a **manifest** recording the upstream URL, its version
+(ETag / Last-Modified / dump date / result count) and a digest of the bytes
+actually parsed. `presearch validate` re-derives that stamp and reports
+`CURRENT` / `DRIFTED` / `UNVERIFIED` / `UNREACHABLE` / `DEGRADED`, and
+`presearch query` runs it before answering.
+
+A broker routing queries against a silently stale index gives wrong answers
+that look right. Drift is reported, not absorbed.
+
+`DEGRADED` is the separate failure: a directory ages by *rot*, not by edit.
+The dump can be perfectly current while a third of what it lists is gone —
+the `Computers` slice is full of live entries for conferences that ended in
+1998 — so `validate` also liveness-checks a sample of registered URLs.
+
+### Storage
+
+The registry loads with `auto_embed=False`. Matching a query to a category
+label is lexical work, and embedding 2.7M directory stubs would dominate the
+appliance for no measured gain. The `Computers` subtree at
+`--min-entries 5 --max-depth 4` is 1,448 topics and 19,295 sources.
+
+### Container
+
+```sh
+docker compose run --rm presearch check                 # against your appliance
+docker compose --profile appliance up -d                # or bring one up locally
+```
+
 ## Layout
 
 ```
@@ -70,6 +138,15 @@ common.py    shared http fetch, html→text, cache, SSRF guard
 fetch.py     URL → clean text
 search.py    query → merged results from N backends
 .cache/      disk cache (url sha1 → text)
+
+presearch/
+  record.py      normalized Topic/Source/Upstream/Manifest
+  providers/     curlie, dmoz, wikidata (bulk); marginalia (discovery)
+  jmfts.py       REST client, with a preflight that fails before a load
+  registry.py    normalized records → JMFTS documents + triples
+  validate.py    does the registry still rest on its upstream?
+  broker.py      query → tiered routing plan (no network, deterministic)
+  cli.py         presearch <check|fetch|load|discover|validate|query|reindex>
 ```
 
 ## Design notes
