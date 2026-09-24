@@ -195,22 +195,27 @@ def _resolve_ddg_url(href, base_url):
 
 
 def is_private_host(hostname):
-    """Cheap SSRF guard: flag loopback / RFC1918 / link-local names and IPs."""
-    h = (hostname or "").lower()
+    """SSRF guard: True if the host is, or resolves to, a non-public address.
+
+    Every address the name resolves to is checked (a name with one public and
+    one loopback address is not public), with the ipaddress module rather than
+    string prefixes: 172.16.0.0/12, 100.64.0.0/10 (carrier-grade NAT), IPv6
+    loopback and link-local, and the rest of the reserved space all count.
+    """
+    import ipaddress
+
+    h = (hostname or "").lower().strip("[]")
     if h in ("localhost",) or h.endswith(".local") or h.endswith(".internal"):
         return True
     try:
-        ip = socket.gethostbyname(h)
+        infos = socket.getaddrinfo(h, None)
     except socket.gaierror:
         return False  # unresolvable; the fetch will fail on its own
-    return (
-        ip.startswith("127.") or ip.startswith("10.")
-        or ip.startswith("192.168.")
-        or ip.startswith("169.254.")
-        or ip.startswith("172.1[6-9].")
-        or ip.startswith("172.2") or ip.startswith("172.3")
-        or ip == "0.0.0.0"
-    )
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not ip.is_global:
+            return True
+    return False
 
 
 def _cache_path(url):
