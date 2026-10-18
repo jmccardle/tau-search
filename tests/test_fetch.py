@@ -1,6 +1,6 @@
 """fetch_url / http_get: cache, truncation, SSRF guard. No real network.
 
-Run: ./venv/bin/python -m unittest -v
+Run: .venv/bin/python -m unittest discover -s tests
 """
 
 import io

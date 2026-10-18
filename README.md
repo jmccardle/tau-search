@@ -253,7 +253,7 @@ migrations on later starts, and survives `down`/`up`; `down -v` wipes the data.
 ```
 pyproject.toml
 src/tau_search/
-  common.py    shared http fetch, html→text, cache, SSRF guard
+  common.py    shared http fetch, html→text, disk cache
   fetch.py     URL → clean text                    (tau-fetch)
   search.py    query → merged results from N backends  (tau-web-search)
   ext/

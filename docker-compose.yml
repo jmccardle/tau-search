@@ -31,7 +31,7 @@ services:
       - -c
       - |
         : "$${JMFTS_API_TOKEN:?JMFTS_API_TOKEN is not set: export the same token the JMFTS server uses}"
-        exec python -m presearch.cli "$$@"
+        exec presearch "$$@"
       - presearch
     environment:
       JMFTS_API_URL: ${JMFTS_API_URL:-http://jmfts:8100}
