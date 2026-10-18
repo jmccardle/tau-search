@@ -1,11 +1,21 @@
 # Two ways to run this.
 #
-#   Against an appliance you already have:
+# Both need JMFTS_API_TOKEN: the shared bearer secret between the presearch
+# client and the JMFTS server. Mint one and keep it (an empty token makes JMFTS
+# invent a throwaway one at every boot, which the client cannot know -- 401s):
+#
+#     export JMFTS_API_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+#
+#   Against an appliance you already have (use ITS token):
 #     JMFTS_API_URL=http://192.168.1.100:8100 docker compose run --rm presearch check
 #
 #   Self-contained, bringing up Postgres and JMFTS alongside:
 #     docker compose --profile appliance up -d
 #     docker compose run --rm presearch check
+#     docker compose --profile appliance down        # add -v to wipe the data
+#
+# The token is checked when a container starts, not by compose interpolation
+# (`${VAR:?}` would also break `config` and `down` when it is unset).
 #
 # The registry is a lexical index, so the JMFTS service here installs the base
 # distribution without the model stack. It cannot embed, and does not need to.
@@ -14,6 +24,15 @@ services:
   presearch:
     build: .
     image: tau-search/presearch:0.1.0
+    # Refuse an empty token up front: every call would 401 and the client's
+    # error would not say why. Otherwise identical to the image ENTRYPOINT.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        : "$${JMFTS_API_TOKEN:?JMFTS_API_TOKEN is not set: export the same token the JMFTS server uses}"
+        exec python -m presearch.cli "$$@"
+      - presearch
     environment:
       JMFTS_API_URL: ${JMFTS_API_URL:-http://jmfts:8100}
       JMFTS_API_TOKEN: ${JMFTS_API_TOKEN:-}
@@ -49,14 +68,81 @@ services:
       JMFTS_DB_PASSWORD: ${JMFTS_DB_PASSWORD:-jmfts}
       JMFTS_DB_NAME: ${JMFTS_DB_NAME:-jmfts}
       JMFTS_API_TOKEN: ${JMFTS_API_TOKEN:-}
-    command: >
-      bash -lc "pip install --no-cache-dir jmfts &&
-                jmfts-init-db &&
-                jmfts-server --host 0.0.0.0 --port 8100"
+      # Registry rows are only ever searched with an explicit usetype, and an
+      # explicit usetype overrides this list, so a registry-only appliance (what
+      # this is) would work without it. It is set because this is the operator
+      # config: if anything else is ever loaded here, the registry usetypes must stay out
+      # of default search. This is jmfts's default list (config.py
+      # search_exclude_usetypes) plus the four exact registry usetypes (exact match, not globs); setting the var
+      # REPLACES the default, so the defaults are repeated. Do NOT add the registry usetypes
+      # to JMFTS_BM25_EXCLUDE_USETYPES: that would empty the registry's own BM25 index.
+      JMFTS_SEARCH_EXCLUDE_USETYPES: '["entity","entities","summary","derived","registry:root","registry:topic","registry:source","registry:manifest"]'
+    # Startup is: install, refuse an empty token, then init OR migrate, then serve.
+    #
+    # `jmfts-init-db` is NOT idempotent: it skips CREATE DATABASE when the
+    # database exists (the db service's POSTGRES_DB always creates it), but
+    # schema.sql is bare CREATE TABLE, so a second run fails (jmfts#50) -- and
+    # with `&&` the server then never starts. So schema init runs only when the
+    # database has no `documents` table. Its schema load is one transaction, so
+    # a failed first init rolls back clean and the next start retries; a real
+    # init error exits non-zero and stops the container.
+    # On later starts, `jmfts-init-db --pending` (exit 0 none, 1 some, 2 cannot
+    # tell, e.g. the database is ahead of the installed jmfts) lists unapplied
+    # migrations and applies nothing; we apply those, in order, each of which
+    # carries its own BEGIN/COMMIT and ledger row. Exit 2 or any SQL error
+    # stops the container. `pip install jmfts` is unpinned: pin it (jmfts==X)
+    # for a reproducible appliance.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        : "$${JMFTS_API_TOKEN:?JMFTS_API_TOKEN is not set: export it before docker compose up, and use the same value for the presearch client}"
+        pip install --no-cache-dir jmfts
+        rc=0
+        python - <<'PY' || rc=$$?
+        import sys, psycopg2
+        from jmfts_core.config import get_settings
+        s = get_settings()
+        conn = psycopg2.connect(host=s.db_host, port=s.db_port, user=s.db_user,
+                                password=s.db_password, dbname=s.db_name)
+        cur = conn.cursor()
+        cur.execute("SELECT to_regclass('public.documents')")
+        sys.exit(0 if cur.fetchone()[0] else 3)
+        PY
+        case $$rc in
+          0)
+            rc=0
+            pending=$$(jmfts-init-db --pending) || rc=$$?
+            if [ $$rc -ne 0 ] && [ $$rc -ne 1 ]; then
+              echo "cannot determine migration state (jmfts-init-db --pending exit $$rc)" >&2
+              exit 1
+            fi
+            if [ -n "$$pending" ]; then
+              python - $$pending <<'PY'
+        import sys, psycopg2
+        from jmfts_core import sql
+        from jmfts_core.config import get_settings
+        s = get_settings()
+        conn = psycopg2.connect(host=s.db_host, port=s.db_port, user=s.db_user,
+                                password=s.db_password, dbname=s.db_name)
+        conn.autocommit = True  # each migration file carries its own BEGIN/COMMIT
+        cur = conn.cursor()
+        for name in sys.argv[1:]:
+            print("applying migration", name, flush=True)
+            cur.execute(sql.migration_sql(name))
+        PY
+            fi
+            ;;
+          3) jmfts-init-db ;;
+          *) echo "database probe failed (exit $$rc)" >&2; exit 1 ;;
+        esac
+        exec jmfts-server --host 0.0.0.0 --port 8100 --no-reload
     ports:
       - "${JMFTS_PORT:-8100}:8100"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8100/health || exit 1"]
+      # python:3.12-slim has no curl. /health is open (no token).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 30

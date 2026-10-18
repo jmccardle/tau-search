@@ -127,9 +127,16 @@ appliance for no measured gain. The `Computers` subtree at
 ### Container
 
 ```sh
-docker compose run --rm presearch check                 # against your appliance
+# One shared secret for client and server (empty makes JMFTS mint a throwaway
+# token each boot, so every client call 401s). Both sides refuse to start without it.
+export JMFTS_API_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+
+docker compose run --rm presearch check                 # against your appliance (set JMFTS_API_URL and its token)
 docker compose --profile appliance up -d                # or bring one up locally
 ```
+
+The local appliance initialises its schema once, applies any pending jmfts
+migrations on later starts, and survives `down`/`up`; `down -v` wipes the data.
 
 ## Layout
 
