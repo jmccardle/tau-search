@@ -1,6 +1,6 @@
 """fetch_url / http_get: cache, truncation, SSRF guard. No real network.
 
-Run: ./venv/bin/python -m unittest -v
+Run: .venv/bin/python -m unittest discover -s tests
 """
 
 import io
@@ -14,9 +14,9 @@ from unittest import mock
 import requests
 from requests.adapters import BaseAdapter
 
-import common
-import fetch
-import search
+from tau_search import common
+from tau_search import fetch
+from tau_search import search
 
 HOSTS = {"public.test": "93.184.216.34", "other.test": "93.184.216.35",
          "evil.test": "127.0.0.1", "metadata.test": "169.254.169.254"}
@@ -66,7 +66,7 @@ class Base(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        for p in (mock.patch.object(common, "CACHE_DIR", tmp.name),
+        for p in (mock.patch.dict(os.environ, {"TAU_SEARCH_CACHE": tmp.name}),
                   mock.patch.object(common.socket, "getaddrinfo", _getaddrinfo)):
             p.start()
             self.addCleanup(p.stop)
@@ -149,7 +149,7 @@ class Cache(Base):
     def test_cache_set_leaves_no_tmp_file_on_failure(self):
         with self.assertRaises(TypeError):
             common.cache_set("http://public.test/", {"text": object()})
-        self.assertEqual(os.listdir(common.CACHE_DIR), [])
+        self.assertEqual(os.listdir(common.cache_dir()), [])
 
 
 class Guard(Base):

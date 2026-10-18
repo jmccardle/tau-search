@@ -1,4 +1,4 @@
-"""Shared plumbing for fetch.py and search.py.
+"""Shared plumbing for tau_search.fetch and tau_search.search.
 
 Tier-1 web access: plain HTTP GET, browser-like headers, hard timeouts,
 size caps, small disk cache. No JS, no cookies, no stealth.
@@ -13,9 +13,6 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup, Tag
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR = os.path.join(HERE, ".cache")
 
 DEFAULT_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -41,13 +38,21 @@ def build_session(user_agent=DEFAULT_UA):
 
 def refusal(url):
     """Why url must not be fetched by default, or None. http(s) to public hosts only."""
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError as e:
+        return f"malformed URL: {e}"
     if parts.scheme not in ("http", "https"):
         return f"only http and https are fetched, not {parts.scheme or 'no scheme'}"
-    if not parts.hostname:
+    if not host:
         return "the URL names no host"
-    if is_private_host(parts.hostname):
-        return f"{parts.hostname!r} is a private/loopback/non-public host"
+    try:
+        private = is_private_host(host)
+    except UnicodeError as e:  # getaddrinfo's idna encoding: ".com", >63-char label
+        return f"malformed URL: {e}"
+    if private:
+        return f"{host!r} is a private/loopback/non-public host"
     return None
 
 
@@ -80,7 +85,9 @@ def http_get(url, session=None, timeout=DEFAULT_TIMEOUT, max_bytes=MAX_BYTES,
     try:
         resp = session.get(url, timeout=timeout, allow_redirects=True,
                            stream=True, hooks=hooks)
-    except requests.RequestException as e:
+    except (requests.RequestException, ValueError) as e:
+        # ValueError: a bad host (".com", a >63 char label) escapes requests as
+        # a bare UnicodeError or urllib3 LocationParseError, both ValueErrors.
         raise FetchError(f"request failed: {e}") from e
 
     body = b""
@@ -253,10 +260,21 @@ def is_private_host(hostname):
 CACHE_KEYS = {"url", "title", "content_type", "status", "text"}
 
 
+def cache_dir():
+    """Cache directory: $TAU_SEARCH_CACHE, else $XDG_CACHE_HOME/tau-search,
+    else ~/.cache/tau-search. Read on every call so tests can redirect it."""
+    explicit = os.environ.get("TAU_SEARCH_CACHE")
+    if explicit:
+        return explicit
+    base = (os.environ.get("XDG_CACHE_HOME")
+            or os.path.join(os.path.expanduser("~"), ".cache"))
+    return os.path.join(base, "tau-search")
+
+
 def _cache_path(url):
     # .json: entries from the old text-only scheme (.txt) are simply misses.
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()
-    return os.path.join(CACHE_DIR, digest + ".json")
+    return os.path.join(cache_dir(), digest + ".json")
 
 
 def cache_get(url):
@@ -282,7 +300,7 @@ def cache_set(url, entry):
     path = _cache_path(url)
     tmp = f"{path}.{os.getpid()}.tmp"
     try:
-        os.makedirs(CACHE_DIR, exist_ok=True)
+        os.makedirs(cache_dir(), exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(entry, f, ensure_ascii=False)
         os.replace(tmp, path)  # atomic: a reader never sees half an entry

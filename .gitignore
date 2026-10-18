@@ -1,5 +1,9 @@
 venv/
-.cache/
 __pycache__/
 data/
 *.tar.gz
+.venv/
+.tau-src/
+*.egg-info/
+build/
+dist/

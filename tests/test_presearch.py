@@ -9,12 +9,12 @@ import json
 import unittest
 from unittest import mock
 
-from presearch import broker, cli
-from presearch.record import P_HOME_URL
-from presearch.jmfts import Jmfts, JmftsError
-from presearch.record import (P_COVERS_TOPIC, P_LISTED_BY, P_SEARCH_ENDPOINT,
+from tau_search.presearch import broker, cli
+from tau_search.presearch.record import P_HOME_URL
+from tau_search.presearch.jmfts import Jmfts, JmftsError
+from tau_search.presearch.record import (P_COVERS_TOPIC, P_LISTED_BY, P_SEARCH_ENDPOINT,
                               Source, Topic, UT_SOURCE, UT_TOPIC)
-from presearch.registry import Registry
+from tau_search.presearch.registry import Registry
 
 
 class FakeResponse:
@@ -147,7 +147,7 @@ class TripleTest(unittest.TestCase):
 
 class RetryTest(unittest.TestCase):
     def setUp(self):
-        p = mock.patch("presearch.jmfts.time.sleep")
+        p = mock.patch("tau_search.presearch.jmfts.time.sleep")
         p.start()
         self.addCleanup(p.stop)
 
@@ -248,7 +248,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(args.sample, 0)
 
     def test_discover_accept_refuses_before_any_request(self):
-        from presearch.providers.marginalia import MarginaliaProvider
+        from tau_search.presearch.providers.marginalia import MarginaliaProvider
 
         client = make_client()  # no routes: any JMFTS request would raise
         args = cli.build_parser().parse_args(

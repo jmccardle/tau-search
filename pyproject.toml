@@ -1,0 +1,42 @@
+[project]
+name = "ffwf-tau-search"
+# The version is not a literal here: it is read from tau_search.__version__,
+# the same way tau's own distributions do it.
+dynamic = ["version"]
+description = "τ-search: tier-1 web fetch, keyless metasearch, presearch, and a Tau extension"
+requires-python = ">=3.11"
+readme = "README.md"
+# SPDX expression + the file itself (PEP 639), hence setuptools >= 77.0.3.
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Fight Fire with Fire Robotics, LLC" }]
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "ffwf-tau-agent-core>=0.13.0",
+    "typing_extensions>=4.6",
+]
+
+[project.scripts]
+tau-fetch = "tau_search.fetch:main"
+tau-web-search = "tau_search.search:main"
+presearch = "tau_search.presearch.cli:main"
+
+# PROVISIONAL: tau 0.13.0 ignores this group. Entry-point loading of
+# extensions is tau issue #35 (planned for tau 0.14.0); the group name and
+# value shape may change to match what lands. Until then, load the file by
+# path (see README). Under tau#35 the extension's identifier is its full
+# Python module name, "tau_search.ext.search"; users authorize it by
+# distribution name and version, and an update needs authorizing again.
+[project.entry-points."tau.extensions"]
+search = "tau_search.ext.search"
+
+[build-system]
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "tau_search.__version__" }

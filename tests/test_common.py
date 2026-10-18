@@ -1,10 +1,10 @@
-"""is_private_host: run with `./venv/bin/python -m unittest test_common`."""
+"""is_private_host: run with `.venv/bin/python -m unittest discover -s tests`."""
 
 import socket
 import unittest
 from unittest import mock
 
-import common
+from tau_search import common
 
 
 def _resolving(*addrs):
@@ -37,6 +37,26 @@ class PrivateHost(unittest.TestCase):
             self.assertTrue(common.is_private_host("mixed.test"))
         with _resolving("93.184.216.34", "2606:2800:220:1::1"):
             self.assertFalse(common.is_private_host("public.test"))
+
+
+class MalformedUrls(unittest.TestCase):
+    URLS = ("http://[bad", "http://.com", "http://" + "a" * 70 + ".com")
+
+    def test_refusal_names_a_malformed_url(self):
+        self.assertIn("malformed URL", common.refusal("http://[bad"))
+
+    def test_http_get_raises_fetch_error(self):
+        for url in self.URLS:
+            with self.subTest(url=url):
+                with self.assertRaises(common.FetchError):
+                    common.http_get(url)
+
+    def test_http_get_raises_fetch_error_when_private_allowed(self):
+        # allow_private skips refusal(); requests' own errors must still map.
+        for url in self.URLS[1:]:
+            with self.subTest(url=url):
+                with self.assertRaises(common.FetchError):
+                    common.http_get(url, allow_private=True)
 
 
 if __name__ == "__main__":
