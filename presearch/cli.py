@@ -12,6 +12,7 @@ JMFTS_API_URL / JMFTS_API_TOKEN.
 """
 
 import argparse
+import itertools
 import os
 import sys
 
@@ -75,10 +76,15 @@ def cmd_check(args):
     client = _client(args)
     caps = client.preflight()
     print(f"JMFTS at {args.jmfts}: reachable")
-    for key in ("version", "embedding_model", "retrieval_methods",
-                "ingest_usetypes", "held_out_usetypes"):
-        if key in caps:
-            print(f"  {key}: {caps[key]}")
+    # CapabilitiesResponse: version, retrieval{methods, *_exclude_usetypes}.
+    retrieval = caps.get("retrieval", {})
+    print(f"  version: {caps.get('version')}")
+    print(f"  retrieval methods: {retrieval.get('methods')}")
+    excluded = retrieval.get("search_exclude_usetypes") or []
+    print(f"  search_exclude_usetypes: {excluded}")
+    if not any(u.startswith("registry:") for u in excluded):
+        print("  note: registry:* usetypes are not held out of ordinary "
+              "search; see the README presearch section.")
     print("\nNote: the registry loads with auto_embed=False and needs only "
           "bm25/fulltext.")
     return 0
@@ -101,6 +107,17 @@ def cmd_load(args):
     if getattr(provider, "kind", "bulk") != "bulk":
         raise SystemExit(
             f"{args.provider} is a discovery provider; use `presearch discover`")
+
+    # Literal facts cannot be written yet (jmfts#48). Look at the first source
+    # before anything is written (even the registry skeleton), so a refused
+    # load leaves nothing behind. load_sources re-checks every later source.
+    sources = None
+    if not args.topics_only:
+        sources = iter(provider.sources())
+        first = next(sources, None)
+        if first is not None:
+            Registry.check_loadable(first)
+            sources = itertools.chain([first], sources)
 
     reg = _registry(args)
     reg.ensure_index()
@@ -127,19 +144,21 @@ def cmd_load(args):
                         selector=selector.strip())
     manifest_id = reg.write_manifest(manifest)
 
-    reg.log("loading sources ...")
-    stats = reg.load_sources(provider.sources(), manifest_id,
-                             workers=args.workers,
-                             max_sources=args.max_sources)
-    reg.log(f"sources: {stats['created']} created, "
-            f"{stats['skipped_no_topic']} skipped (topic filtered out), "
-            f"{stats['failed']} failed")
+    if args.topics_only:
+        stats = {"created": 0, "skipped_no_topic": 0, "failed": 0}
+    else:
+        reg.log("loading sources ...")
+        stats = reg.load_sources(sources, manifest_id, workers=args.workers,
+                                 max_sources=args.max_sources)
+        reg.log(f"sources: {stats['created']} created, "
+                f"{stats['skipped_no_topic']} skipped (topic filtered out), "
+                f"{stats['failed']} failed")
 
-    # Rewrite the manifest now that the real count is known.
-    final = Manifest(upstream=upstream, root_id=reg.root_id,
-                     topics_loaded=n_topics, sources_loaded=stats["created"],
-                     selector=selector.strip())
-    reg.write_manifest(final)
+    # The manifest was written before sources (their triples cite its id);
+    # now that the real count is known, update that one document in place.
+    reg.update_manifest(manifest_id, Manifest(
+        upstream=upstream, root_id=reg.root_id, topics_loaded=n_topics,
+        sources_loaded=stats["created"], selector=selector.strip()))
 
     if args.refresh_index:
         reg.log("refreshing bm25 index (rebuilds the whole index) ...")
@@ -172,6 +191,8 @@ def cmd_discover(args):
               "them. Marginalia results are CC-BY-NC-SA 4.0.", file=sys.stderr)
         return 0
 
+    for src in found:
+        reg.check_loadable(src)  # jmfts#48: before the manifest is written
     manifest = Manifest(upstream=provider.upstream(), root_id=reg.root_id,
                         topics_loaded=0, sources_loaded=len(found),
                         selector=f"discover topic={args.topic}")
@@ -241,6 +262,9 @@ def build_parser():
                    help="stop after N sources (0 = no limit; see the warning "
                         "in registry.load_sources before using 0 on Curlie)")
     s.add_argument("--workers", type=int, default=8)
+    s.add_argument("--topics-only", action="store_true",
+                   help="load the taxonomy without sources (sources are "
+                        "refused while literal facts are unwritable, jmfts#48)")
     s.add_argument("--refresh-index", action="store_true")
     s.set_defaults(func=cmd_load)
 

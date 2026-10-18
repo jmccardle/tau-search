@@ -32,8 +32,12 @@ LITERAL_PREDICATES = frozenset({
     P_BUG_TRACKER, P_CAPABILITY, P_TEMPORAL, P_ENTRY_COUNT,
 })
 
-# usetypes. Held out of ordinary retrieval so registry rows never rank
-# against real content -- see JMFTS /capabilities "usetypes held out".
+# usetypes. NOT held out of ordinary retrieval by default: the server's
+# search_exclude_usetypes / bm25_exclude_usetypes defaults are entity, entities,
+# summary, derived (and cell for bm25). The operator must add these exact
+# strings to JMFTS_SEARCH_EXCLUDE_USETYPES (see README; design question is
+# jmfts#52). Our own queries name the usetype explicitly, and a positive
+# usetype filter overrides the exclusion list, so the broker still finds them.
 UT_ROOT = "registry:root"
 UT_TOPIC = "registry:topic"
 UT_SOURCE = "registry:source"

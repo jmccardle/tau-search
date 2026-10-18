@@ -16,19 +16,23 @@ Topics are keyed by path and shared across providers, so Curlie and DMOZ land
 in one tree rather than two parallel ones. Sources hang under their primary
 topic; additional topics become covers_topic triples.
 
-Everything is loaded with auto_embed=False. The registry is a LEXICAL index:
-matching a query to a category label is bm25 work, and embedding 2.7M
-directory stubs would dominate the appliance for no measured gain.
+Everything is loaded with auto_embed=False and auto_index_bm25=False. The
+registry is a LEXICAL index: matching a query to a category label is bm25
+work, and embedding 2.7M directory stubs would dominate the appliance for no
+measured gain. It is searched through its own `presearch` index, not the
+`default` one that holds real content.
+
+Literal facts (search_endpoint, subreddit, ...) cannot be written until
+jmfts#48 lands, so sources that carry them are refused; topics still load.
 """
 
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from .jmfts import Jmfts, JmftsError
+from .jmfts import LITERAL_UNSUPPORTED, Jmfts, JmftsError
 from .record import (LITERAL_PREDICATES, Manifest, P_COVERS_TOPIC, P_LISTED_BY,
-                     P_PARENT_TOPIC, UT_MANIFEST, UT_ROOT, UT_SOURCE, UT_TOPIC,
-                     utcnow)
+                     P_PARENT_TOPIC, UT_MANIFEST, UT_ROOT, UT_SOURCE, UT_TOPIC)
 
 ROOT_TITLE = "tau-presearch"
 MANIFESTS_TITLE = "Manifests"
@@ -101,21 +105,17 @@ class Registry:
         """
         if self._topic_ids:
             return self._topic_ids
-        sub = self.j.get(f"/documents/{self.topics_id}/subtree?max_depth=32")
-        rows = sub.get("results", sub) if isinstance(sub, dict) else (sub or [])
-
-        def walk(node):
-            doc = node.get("document", node)
+        # SubtreeResponse{root, descendants: flat list, total}. Unbounded depth:
+        # a max_depth here would silently drop deep topics and recreate them.
+        # A still-ingesting root is a JmftsError (409), not an empty result.
+        sub = self.j.subtree(self.topics_id)
+        if not isinstance(sub, dict) or "descendants" not in sub:
+            raise JmftsError(
+                f"unexpected subtree response for document {self.topics_id}: "
+                f"{str(sub)[:200]}")
+        for doc in sub["descendants"]:
             if doc.get("usetype") == UT_TOPIC and doc.get("title"):
                 self._topic_ids[doc["title"]] = doc["id"]
-            for child in node.get("children", []) or []:
-                walk(child)
-
-        if isinstance(rows, list):
-            for row in rows:
-                walk(row)
-        else:
-            walk(rows)
         return self._topic_ids
 
     def load_topics(self, topics):
@@ -149,8 +149,27 @@ class Registry:
 
     # ---- sources ---------------------------------------------------------
 
+    @staticmethod
+    def check_loadable(src):
+        """Raise JmftsError if `src` carries literal facts.
+
+        Literal triples cannot be created over REST in JMFTS 0.7.0 (jmfts#48),
+        and we do not stash them elsewhere. Callers run this on the first
+        source before writing anything (topics, manifest), and load_sources
+        runs it on every source before its document is created, so a load
+        stops at the first offender rather than half-completing a source.
+        """
+        literal = sorted(p for p in (src.facts or {}) if p in LITERAL_PREDICATES)
+        if literal:
+            raise JmftsError(
+                f"source {src.url!r} carries literal facts {literal}: "
+                + LITERAL_UNSUPPORTED.format(predicate=literal[0]))
+
     def load_sources(self, sources, manifest_id, workers=8, max_sources=0):
         """Create source documents and their fact triples.
+
+        Refuses (JmftsError, jmfts#48) before writing the first document of
+        any source that carries literal facts; see check_loadable.
 
         NOTE: this is one POST /documents per source. At Curlie's full
         2,739,037 rows that is not a load, it is a denial of service against
@@ -160,6 +179,8 @@ class Registry:
         """
         self._load_existing_topics()
         stats = {"created": 0, "skipped_no_topic": 0, "failed": 0}
+        # An iterator, so a source peeked by the caller is not consumed twice.
+        sources = iter(sources)
 
         def one(src):
             topic_key = src.primary_topic
@@ -172,11 +193,6 @@ class Registry:
                 doc_id = _doc_id(self.j.create_document(
                     title=src.title, content=f"{body}\n\n{src.url}",
                     parent_id=parent_id, usetype=UT_SOURCE))
-                for pred, value in (src.facts or {}).items():
-                    if pred in LITERAL_PREDICATES:
-                        self.j.add_triple(doc_id, pred, value,
-                                          source_document_id=manifest_id,
-                                          valid_from=utcnow())
                 for extra in src.topic_keys[1:]:
                     tid = self._topic_ids.get(extra)
                     if tid:
@@ -196,6 +212,9 @@ class Registry:
             for i, src in enumerate(sources):
                 if max_sources and i >= max_sources:
                     break
+                # On the submitting thread, before the source is queued, so the
+                # refusal propagates instead of being counted as one failed row.
+                self.check_loadable(src)
                 batch.append(pool.submit(one, src))
                 if len(batch) >= workers * 32:
                     for f in batch:
@@ -215,6 +234,11 @@ class Registry:
         return _doc_id(self.j.create_document(
             title=title, content=json.dumps(manifest.to_dict(), indent=2),
             parent_id=self.manifests_id, usetype=UT_MANIFEST))
+
+    def update_manifest(self, manifest_id, manifest: Manifest):
+        """Rewrite a manifest in place (PATCH) once its counts are known."""
+        return self.j.update_document(
+            manifest_id, content=json.dumps(manifest.to_dict(), indent=2))
 
     def manifests(self):
         """Every manifest currently recorded, newest last."""

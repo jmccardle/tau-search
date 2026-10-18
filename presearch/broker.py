@@ -16,8 +16,10 @@ import json
 from dataclasses import asdict, dataclass, field
 
 from .record import UT_SOURCE, UT_TOPIC
+from .registry import INDEX_NAME
 
 OPEN_WEB = "open-web"
+MAX_SEARCH_LIMIT = 100  # SearchRequest.limit is 1..100
 
 
 @dataclass
@@ -111,12 +113,14 @@ def plan(registry, query, limit=10, method="bm25", validate_first=True,
 
     # Topic hits tell us WHERE in the taxonomy the query lands; source hits
     # tell us WHAT to ask. Both come from the same lexical index.
+    # SearchRequest.limit is capped at 100 server-side; the source query
+    # over-fetches 3x so deeper tiers have candidates, up to that cap.
     topic_hits = _rows(registry.j.search(
-        query, method=method, limit=limit, usetype=UT_TOPIC,
-        parent_id=registry.root_id))
+        query, method=method, limit=min(limit, MAX_SEARCH_LIMIT),
+        usetype=UT_TOPIC, parent_id=registry.root_id, index_name=INDEX_NAME))
     source_hits = _rows(registry.j.search(
-        query, method=method, limit=limit * 3, usetype=UT_SOURCE,
-        parent_id=registry.root_id))
+        query, method=method, limit=min(limit * 3, MAX_SEARCH_LIMIT),
+        usetype=UT_SOURCE, parent_id=registry.root_id, index_name=INDEX_NAME))
 
     best_topics = []
     for row in topic_hits:

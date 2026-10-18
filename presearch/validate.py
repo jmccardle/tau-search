@@ -20,6 +20,7 @@ import requests
 
 from .providers import ALL
 from .record import UT_SOURCE
+from .registry import INDEX_NAME
 
 CURRENT = "CURRENT"
 DRIFTED = "DRIFTED"
@@ -110,8 +111,9 @@ def sample_sources(registry, sample=25, tolerate=0.4, workers=8):
     third of what it lists is gone. `tolerate` is the dead fraction above
     which the registry is reported DEGRADED.
     """
-    hits = registry.j.search("http", method="bm25", limit=sample,
-                             usetype=UT_SOURCE, parent_id=registry.root_id)
+    hits = registry.j.search("http", method="bm25", limit=min(sample, 100),
+                             usetype=UT_SOURCE, parent_id=registry.root_id,
+                             index_name=INDEX_NAME)
     rows = (hits or {}).get("results", []) if isinstance(hits, dict) else []
     urls = []
     for row in rows:
