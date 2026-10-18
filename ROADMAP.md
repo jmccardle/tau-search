@@ -1,81 +1,62 @@
 # tau-search roadmap
 
-**Version:** untagged, no packaging on `master`. `ffwf-tau-search` 0.1.0 is on an unmerged branch.
-**Branch:** `master` @ b65a9e6. Approved and unmerged: `worktree-agent-afab9f112638baebd` @ 76d0b54.
+**Version:** `ffwf-tau-search` 0.1.0, tagged `v0.1.0` and not on PyPI.
+**Branch:** `master`.
 **Target:** a pip-installable Tau extension for tau 0.14.0, shipped alongside tau-router.
 
-## Shipped (on master)
+## Shipped
 
+- **0.1.0 packaging** (merged 2026-10-18 after FFwF_Robotics/tectum#3 landed as tectum fceff60)
+  - **Layout:** a src package, `tau_search`. The public modules are `tau_search.common`, `tau_search.fetch` and `tau_search.search`, plus `tau_search.presearch`.
+  - **Commands:** `tau-fetch`, `tau-web-search`, `presearch`.
+  - **Cache:** `common.cache_dir()` uses `TAU_SEARCH_CACHE`, else `$XDG_CACHE_HOME/tau-search`, else `~/.cache/tau-search`. `CACHE_DIR` and `HERE` are gone.
+  - **Extension `tau_search.ext.search`:**
+    - Async `web_search` and `web_fetch` tools with structured output.
+    - Output is marked untrusted.
+    - `web_fetch` never allows private hosts.
+    - On abort, the tools raise `CancelledError`.
+  - **Entry point:** `tau.extensions: search = "tau_search.ext.search"`, provisional on tau#35. For now, load it with single-file `-e`.
+  - **Verified 2026-10-18:**
+    - A fresh-venv install takes all dependencies from PyPI (tau 0.13.0).
+    - 75 tests and `tests/check_loader.py` pass.
+    - `ffwf-tau` 0.13.0 ran headless on `claude-haiku-5-5` and called both tools.
+    - `docker build` passes.
+  - Gotcha: `--tools web_fetch` fails with `ValueError: Unknown tool: web_fetch` (`sdk.py:243`). The allowlist is resolved before extensions load, so use `--no-builtin-tools`.
 - **Fetch layer** (merge ee08560)
-  - The cache stores full text as JSON and truncates on output. Writes are atomic.
-  - Corrupt cache entries raise `FetchError`.
-  - Private hosts are refused, including every redirect hop and the cached final URL. The `fetch.py` CLI opts in with `--allow-private`.
+  - Full-text JSON cache with atomic writes.
+  - Private hosts are refused, including every redirect hop and the cached final URL.
+  - Malformed URLs raise `FetchError`.
 - **presearch, matched to jmfts 0.7.0** (merge b68678b)
-  - Reads subtree `descendants` and capabilities from `retrieval.methods`.
-  - Writes triples with `PUT /triples` and refuses literal triples (jmfts#48).
-  - Adds `load --topics-only`, dedup on write and an explicit `index_name`.
-  - Limits outside 1..100 are refused, not clamped.
-  - Only GET/HEAD/PUT retry.
-  - `discover --accept` refuses before any network request.
+  - Uses `PUT /triples` and refuses literal triples (jmfts#48).
+  - Adds `--topics-only`, dedup and an explicit `index_name`.
+  - Limits must be 1..100.
+  - `discover --accept` refuses before any request.
 - **Bundled appliance** (merge b65a9e6)
   - `jmfts==0.7.0` pinned.
-  - Restart-safe init: a pending migration fails loudly (jmfts#50).
-  - Python healthcheck, no reload.
-  - Token required.
-  - registry usetypes are excluded from search.
-
-## In progress (approved, not merged)
-
-Branch `worktree-agent-afab9f112638baebd`:
-
-- **Layout:** a src package, `tau_search`, distributed as `ffwf-tau-search` 0.1.0.
-- **Commands:** `tau-fetch`, `tau-web-search`, `presearch`.
-- **Cache:** moved to XDG (`TAU_SEARCH_CACHE`, else `$XDG_CACHE_HOME/tau-search`).
-- **Extension `tau_search.ext.search`:**
-  - Async `web_search` and `web_fetch` tools with structured output.
-  - Output is marked untrusted.
-  - `web_fetch` never allows private hosts.
-  - On abort, the tools raise `CancelledError`.
-- **Entry point:** `tau.extensions: search = "tau_search.ext.search"`, provisional on tau#35.
-- **Tests:** 75 pass, and tau 0.13.0's real loader registers both tools (`tests/check_loader.py`).
-- **Verified 2026-10-18 against PyPI, without merging:**
-  - In a fresh venv, the branch installed with all its dependencies from PyPI (ffwf-tau-agent-core and ffwf-tau-llm 0.13.0) and no tau checkout.
-  - All 75 tests and `check_loader.py` pass against the installed wheel.
-  - `ffwf-tau` 0.13.0 ran headless with `-e <installed ext/search.py> --no-builtin-tools -m claude-haiku-5-5`. The model called `web_search` and `web_fetch`, both results carried the untrusted-content headers, and the run ended `done`.
-  - `docker build` passes. In the image, `tau_search` 0.1.0 imports and `presearch --help` runs.
-  - Gotcha: `--tools web_fetch` fails with `ValueError: Unknown tool: web_fetch` (`sdk.py:243`). The allowlist is resolved before extensions load, so use `--no-builtin-tools`.
+  - Pending migrations fail loudly (jmfts#50).
+  - Python healthcheck, token required, registry usetypes excluded.
 - **Default test model:** `claude-haiku-5-5`. No tau-search script, test or doc names a model.
 
 ## Open decisions (John)
 
-- **Merge order vs tectum:** option B is underway in FFwF_Robotics/tectum#3. Hold the merge until tectum-arecibo says its branch is on master. Two calls are still John's:
-  - Publish `ffwf-tau-search` 0.1.0 to PyPI?
-  - Make the tau-search repo world-readable? Anonymous https currently returns 404, so a forked Tectum can't install it from git.
-- **Merge order vs tectum (background).** The merge breaks `tectum/shim_cli.py:194-208`, which imports bare `common`/`fetch`/`search` from a checkout.
-  - Option A: merge now and fix tectum separately.
-  - Option B: make the tectum change first, then merge. **Recommended.**
-  - The tectum change is small: `from tau_search import common, fetch, search`, and drop `TECTUM_TAU_SEARCH_DIR`.
-- ~~**tau#35(a):**~~ Decided 2026-10-18: drop-ins and entry-point packages go through one authorization gate, and existing drop-ins are grandfathered.
-  - Drop-ins are still auto-discovered but need a path-based authorization record.
-  - Drop-ins are `.py` files or package directories, never wheels or zips.
-  - The identifier everywhere is the full dotted module name. The last-segment shorthand works only interactively and refuses if ambiguous.
-  - For tau-search in 0.14.0:
-    - config becomes `tau_search.ext.search:KEY=VALUE`, replacing the 0.13.0 stem key `search`;
-    - topics become `ext:tau_search.ext.search:<topic>`;
-    - update the README and the extension's config docs when tau 0.14.0 lands.
+- **Publish `ffwf-tau-search` 0.1.0 to PyPI?** Recommended. Tectum's `web` extra needs `ffwf-tau-search>=0.1.0`.
+- **Make dev.ffwf.net/john/tau-search world-readable?** Anonymous https returns 404, so forked installs from git fail.
+
+## Decided
+
+- **tau#35(a)** (2026-10-18): drop-ins and entry-point packages go through one authorization gate, and existing drop-ins are grandfathered.
+  - The identifier is the full dotted module name.
+  - In 0.14.0, config becomes `tau_search.ext.search:KEY=VALUE`, replacing the stem key `search`. Topics become `ext:tau_search.ext.search:<topic>`.
 
 ## External blockers
 
-- ~~**ffwf-tau-agent-core 0.13.0 on PyPI.**~~ Resolved 2026-10-18. Both the Docker build and a clean `pip install` pass.
-- **tau#35:** entry-point loading and authorization. Until it lands, the extension loads through single-file `-e`, and the config key `search` may change.
-- **tau#40:** `extension_owner()` mangles package-directory labels. Until it's fixed, single-file `-e` is the only documented path.
+- **tau#35:** entry-point loading and authorization. The config key changes in 0.14.0.
+- **tau#40:** `extension_owner()` mangles package-directory labels. Single-file `-e` is the only documented path until it's fixed.
 - **jmfts#48:** no literal triples over REST. This blocks presearch `load` for literal predicates.
-- **jmfts#50:** `jmfts-init-db` isn't idempotent. Compose fails loudly on pending migrations until it's fixed.
-- **jmfts#49, #51–#55:** filed and tracked upstream. None blocks a merge.
+- **jmfts#50:** `jmfts-init-db` isn't idempotent. Compose fails loudly on pending migrations.
+- **jmfts#49, #51–#55:** tracked upstream, non-blocking.
 
 ## Next
 
-- Merge the packaging branch and remove its worktree, once the tectum decision is made.
-- Tag 0.1.0 after the merge. The PyPI and Docker preconditions are met.
 - Run a live appliance test of the presearch CLI. This has never been run end to end.
-- Switch from `-e` to entry-point loading when tau#35 lands.
+- When tau 0.14.0 lands, switch from `-e` to entry-point loading and update the config key docs.
