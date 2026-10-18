@@ -38,6 +38,13 @@ Branch `worktree-agent-afab9f112638baebd`:
   - On abort, the tools raise `CancelledError`.
 - **Entry point:** `tau.extensions: search = "tau_search.ext.search"`, provisional on tau#35.
 - **Tests:** 75 pass, and tau 0.13.0's real loader registers both tools (`tests/check_loader.py`).
+- **Verified 2026-10-18 against PyPI, without merging:**
+  - In a fresh venv, the branch installed with all its dependencies from PyPI (ffwf-tau-agent-core and ffwf-tau-llm 0.13.0) and no tau checkout.
+  - All 75 tests and `check_loader.py` pass against the installed wheel.
+  - `ffwf-tau` 0.13.0 ran headless with `-e <installed ext/search.py> --no-builtin-tools -m claude-haiku-5-5`. The model called `web_search` and `web_fetch`, both results carried the untrusted-content headers, and the run ended `done`.
+  - `docker build` passes. In the image, `tau_search` 0.1.0 imports and `presearch --help` runs.
+  - Gotcha: `--tools web_fetch` fails with `ValueError: Unknown tool: web_fetch` (`sdk.py:243`). The allowlist is resolved before extensions load, so use `--no-builtin-tools`.
+- **Default test model:** `claude-haiku-5-5`. No tau-search script, test or doc names a model.
 
 ## Open decisions (John)
 
@@ -49,7 +56,7 @@ Branch `worktree-agent-afab9f112638baebd`:
 
 ## External blockers
 
-- **ffwf-tau-agent-core 0.13.0 on PyPI.** Only 0.12.0 is published. This blocks the Docker build and a clean `pip install`.
+- ~~**ffwf-tau-agent-core 0.13.0 on PyPI.**~~ Resolved 2026-10-18. Both the Docker build and a clean `pip install` pass.
 - **tau#35:** entry-point loading and authorization. Until it lands, the extension loads through single-file `-e`, and the config key `search` may change.
 - **tau#40:** `extension_owner()` mangles package-directory labels. Until it's fixed, single-file `-e` is the only documented path.
 - **jmfts#48:** no literal triples over REST. This blocks presearch `load` for literal predicates.
@@ -59,6 +66,6 @@ Branch `worktree-agent-afab9f112638baebd`:
 ## Next
 
 - Merge the packaging branch and remove its worktree, once the tectum decision is made.
-- Tag 0.1.0 once tau 0.13.0 is on PyPI and the Docker build passes.
+- Tag 0.1.0 after the merge. The PyPI and Docker preconditions are met.
 - Run a live appliance test of the presearch CLI. This has never been run end to end.
 - Switch from `-e` to entry-point loading when tau#35 lands.
