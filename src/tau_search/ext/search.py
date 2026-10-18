@@ -136,10 +136,15 @@ def render_fetch(value):
 
 # ----------------------------------------------------------------- plumbing
 
-def _check_abort(ctx):
+def _aborted(ctx):
+    """True if the turn was aborted. Tau's guidance (tools/base.py) is that a
+    tool which sees its abort signal returns normally rather than failing, so
+    callers return an empty result. A running to_thread call cannot be
+    interrupted, so this is checked before the thread starts and after it
+    returns.
+    """
     signal = ctx.signal
-    if signal is not None and signal.is_aborted():
-        raise ToolError("aborted")
+    return signal is not None and signal.is_aborted()
 
 
 def _search_blocking(query, backends, limit, local):
@@ -169,10 +174,13 @@ def register(api):
             raise ToolError("query is empty")
         if limit < 1:
             raise ToolError(f"limit must be >= 1, got {limit}")
-        _check_abort(ctx)
+        empty = {"query": query, "results": [], "errors": []}
+        if _aborted(ctx):
+            return empty
         results, errors = await asyncio.to_thread(
             _search_blocking, query, backends, limit, searxng_url)
-        _check_abort(ctx)
+        if _aborted(ctx):
+            return empty
         return {"query": query,
                 "results": [{"title": r["title"], "url": r["url"],
                              "snippet": r["snippet"], "backend": r["backend"]}
@@ -192,12 +200,17 @@ def register(api):
         """
         if max_chars < 1:
             raise ToolError(f"max_chars must be >= 1, got {max_chars}")
-        _check_abort(ctx)
+        # An aborted fetch has no page: the fields are empty, not a failure.
+        empty = {"url": url, "requested": url, "title": "", "content_type": "",
+                 "status": 0, "source": "live", "text": "", "truncated": False}
+        if _aborted(ctx):
+            return empty
         try:
             r = await asyncio.to_thread(_fetch_blocking, url, max_chars)
         except common.FetchError as e:
             raise ToolError(str(e)) from e
-        _check_abort(ctx)
+        if _aborted(ctx):
+            return empty
         return {"url": r["url"], "requested": r["requested"],
                 "title": r["title"], "content_type": r["content_type"],
                 "status": r["status"], "source": r["source"],

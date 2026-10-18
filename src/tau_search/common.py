@@ -38,13 +38,21 @@ def build_session(user_agent=DEFAULT_UA):
 
 def refusal(url):
     """Why url must not be fetched by default, or None. http(s) to public hosts only."""
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError as e:
+        return f"malformed URL: {e}"
     if parts.scheme not in ("http", "https"):
         return f"only http and https are fetched, not {parts.scheme or 'no scheme'}"
-    if not parts.hostname:
+    if not host:
         return "the URL names no host"
-    if is_private_host(parts.hostname):
-        return f"{parts.hostname!r} is a private/loopback/non-public host"
+    try:
+        private = is_private_host(host)
+    except UnicodeError as e:  # getaddrinfo's idna encoding: ".com", >63-char label
+        return f"malformed URL: {e}"
+    if private:
+        return f"{host!r} is a private/loopback/non-public host"
     return None
 
 
@@ -77,7 +85,9 @@ def http_get(url, session=None, timeout=DEFAULT_TIMEOUT, max_bytes=MAX_BYTES,
     try:
         resp = session.get(url, timeout=timeout, allow_redirects=True,
                            stream=True, hooks=hooks)
-    except requests.RequestException as e:
+    except (requests.RequestException, ValueError) as e:
+        # ValueError: a bad host (".com", a >63 char label) escapes requests as
+        # a bare UnicodeError or urllib3 LocationParseError, both ValueErrors.
         raise FetchError(f"request failed: {e}") from e
 
     body = b""
