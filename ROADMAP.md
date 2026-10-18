@@ -1,7 +1,7 @@
 # tau-search roadmap
 
-**Version:** `ffwf-tau-search` 0.1.0, tagged `v0.1.0` and not on PyPI.
-**Branch:** `master`.
+**Version:** `ffwf-tau-search` 0.1.0, released 2026-10-18 on PyPI and TestPyPI. Tag `v0.1.0` is at d7c698a.
+**Branch:** `master`. The remotes are `origin` (dev.ffwf.net) and `github` (public github.com/jmccardle/tau-search).
 **Target:** a pip-installable Tau extension for tau 0.14.0, shipped alongside tau-router.
 
 ## Shipped
@@ -39,12 +39,15 @@
 
 ## Open decisions (John)
 
-- **PyPI publish:** approved 2026-10-18.
-  - Prepared in eee0ea8: `.github/workflows/publish.yml` (trusted publishing over OIDC) and the PyPI metadata.
-  - The public-readiness audit found no secrets.
-  - John's steps: create GitHub `jmccardle/tau-search`; add pending publishers on PyPI and TestPyPI (workflow `publish.yml`, environments `pypi` and `testpypi`); pick a history option; move `v0.1.0` to a commit that contains the workflow.
+- **`pypi` environment protection:** the GitHub environments were auto-created on first use without rules. Suggested: John as required reviewer, plus a `v*` deployment-tag rule.
 
 ## Decided
+
+- **search-pypi** (2026-10-18): published with the history as is, after the public-readiness audit (no secrets).
+  - `v0.1.0` was moved to d7c698a so the tag contains `.github/workflows/publish.yml`.
+  - TestPyPI rehearsal: run 39172673064. PyPI tag push: run 39172826560. Both were green on py3.11–3.14, and both indexes install cleanly.
+  - Publishing uses trusted publishers (OIDC) for `jmccardle/tau-search`, `publish.yml`, with environments `pypi` and `testpypi`.
+- **search-public:** moot now that the GitHub repo is public. dev.ffwf.net stays the working remote.
 
 - **tau#35(a)** (2026-10-18): drop-ins and entry-point packages go through one authorization gate, and existing drop-ins are grandfathered.
   - The identifier is the full dotted module name.
