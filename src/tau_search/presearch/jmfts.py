@@ -24,7 +24,7 @@ DEFAULT_TIMEOUT = (10, 60)
 LITERAL_UNSUPPORTED = (
     "cannot write literal-valued predicate {predicate!r}: JMFTS 0.7.0 has no "
     "REST verb for literal triples (TripleCreate requires object_id). "
-    "Tracked as jmfts#48 (dev.ffwf.net john/jmfts); loads of sources are "
+    "Tracked upstream as jmfts#48; loads of sources are "
     "refused until it lands.")
 
 # Methods safe to repeat after a 5xx or a dropped connection: a repeat cannot

@@ -1,0 +1,213 @@
+# Release pipeline for ffwf-tau-search, adapted from tau's publish.yml for one
+# distribution.
+#
+# Shape: test -> build -> publish. The publish jobs use ONLY the artifact that
+# `build` produced. They never see the source tree and never build anything.
+#
+# Authentication is PyPI Trusted Publishing (OIDC). Repository secrets hold no
+# API token. The publish job requests an OIDC identity token
+# (`permissions: id-token: write`), and pypa/gh-action-pypi-publish exchanges it
+# for a short-lived, project-scoped upload token. This is a single project, so a
+# *pending* publisher on each index can create the project on its first upload.
+# tau needs a one-time hand upload because several of its projects share one
+# publisher; that does not apply here.
+#
+# "Fail Early": no `continue-on-error`, no `|| true`, and no step that turns a
+# failure into a warning. Shell steps run under `set -euo pipefail`.
+
+name: Publish tau-search to PyPI
+
+on:
+  push:
+    # Release tags only. A tag push always targets real PyPI.
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which index to publish to"
+        required: true
+        default: testpypi
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+# Never let two releases upload concurrently. Cancelling a run mid-upload would
+# leave a half-published release.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DIST_DIR: dist
+
+jobs:
+  test:
+    name: Tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        # These must match the classifiers in pyproject.toml. Every version here
+        # ran the whole suite plus tests/check_loader.py on 2026-10-18, in clean
+        # python:<v>-bookworm containers, installing the package exactly as the
+        # step below does: 75 tests OK and the loader check OK on each. 3.11 is
+        # the `requires-python` floor. The list has no gaps, so `>=3.11` makes no
+        # untested promise. 3.14t is left out because it has not been measured.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the package (non-editable, dependencies from PyPI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: unittest
+        shell: bash
+        # -I, so the tests import the INSTALLED package and never the checkout.
+        run: |
+          set -euo pipefail
+          python -I -m unittest discover -s tests -v
+
+      - name: Real tau extension loader
+        shell: bash
+        # Drives tau's own loader on the installed tau_search/ext/search.py.
+        # Runs outside the checkout for the same reason as -I above.
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          python -I "$GITHUB_WORKSPACE/tests/check_loader.py"
+
+  build:
+    name: Build ffwf-tau-search
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The wheel is pure Python (py3-none-any), so one build serves every
+          # supported version.
+          python-version: "3.11"
+
+      - name: Install build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Check the version matches the tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' src/tau_search/__init__.py)"
+          if [ -z "$VERSION" ]; then
+            echo "could not read __version__ from src/tau_search/__init__.py" >&2
+            exit 1
+          fi
+          echo "ffwf-tau-search=$VERSION"
+          # On a tag push the tag IS the release name. A mismatch would publish a
+          # version nobody asked for, and PyPI versions cannot be reused.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [ "$TAG_VERSION" != "$VERSION" ]; then
+              echo "tag ${GITHUB_REF_NAME} does not match package version ${VERSION}" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build wheel + sdist
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m build --sdist --wheel --outdir "$DIST_DIR" .
+
+      - name: Verify both artifacts are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la "$DIST_DIR"
+          count="$(find "$DIST_DIR" -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) | wc -l)"
+          if [ "$count" -ne 2 ]; then
+            echo "expected 2 artifacts (1 wheel + 1 sdist), found $count" >&2
+            exit 1
+          fi
+
+      - name: twine check (strict)
+        shell: bash
+        # --strict turns metadata and README rendering warnings into failures.
+        # PyPI will not accept a re-upload of a version once it is taken.
+        run: |
+          set -euo pipefail
+          twine check --strict "$DIST_DIR"/*
+
+      - name: Upload dists as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tau-search-dists
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    # Rehearsal only: manual runs that explicitly ask for it.
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/ffwf-tau-search/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the built dists
+        uses: actions/download-artifact@v4
+        with:
+          name: tau-search-dists
+          path: dist/
+
+      - name: Publish to TestPyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          # skip-existing stays false: re-uploading an existing version is an
+          # error, not a quiet no-op.
+
+  publish-pypi:
+    name: Publish to PyPI
+    # Tag pushes always go to real PyPI. A manual run can too, if asked.
+    if: github.event_name == 'push' || inputs.target == 'pypi'
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ffwf-tau-search/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the built dists
+        uses: actions/download-artifact@v4
+        with:
+          name: tau-search-dists
+          path: dist/
+
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # skip-existing left at its default (false) deliberately.

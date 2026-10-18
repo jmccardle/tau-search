@@ -38,7 +38,7 @@ ENDPOINT = "https://query.wikidata.org/sparql"
 # Wikidata asks for a descriptive agent with contact info; a generic browser
 # UA gets throttled or blocked.
 UA = ("tau-presearch/0.1 (federated-search registry builder; "
-      "https://github.com/ - contact via repository)")
+      "https://github.com/jmccardle/tau-search)")
 
 QUERY = """
 SELECT ?item ?itemLabel ?itemDescription ?site ?subreddit ?setag ?repo ?tracker ?clsLabel

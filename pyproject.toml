@@ -10,12 +10,35 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Fight Fire with Fire Robotics, LLC" }]
+keywords = ["tau", "agent", "web-search", "web-fetch", "metasearch", "extension"]
+# No License :: classifier: PEP 639 forbids it alongside an SPDX `license`.
+# The version list is the CI matrix in .github/workflows/publish.yml; keep the
+# two in step.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "requests>=2.31",
     "beautifulsoup4>=4.12",
     "ffwf-tau-agent-core>=0.13.0",
     "typing_extensions>=4.6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jmccardle/tau-search"
+Repository = "https://github.com/jmccardle/tau-search"
+Issues = "https://github.com/jmccardle/tau-search/issues"
 
 [project.scripts]
 tau-fetch = "tau_search.fetch:main"
