@@ -28,8 +28,12 @@ Behavior:
 - HTML → clean text: main content container, boilerplate stripped, leaf
   blocks collected, links kept as `text (url)`. JSON/XML/text pass through.
 - Output truncated to `--max-chars` (default 8000).
-- Private/loopback hosts print a warning unless `--allow-private`.
-- Successful fetches cached in `.cache/` keyed by URL sha1.
+- Private/loopback/non-http(s) URLs are refused (a failure, exit 1) unless
+  `--allow-private`; every redirect hop is checked too, so a public URL
+  cannot bounce you to 127.0.0.1 or 169.254.169.254. `common.http_get` and
+  `fetch.fetch_url` take `allow_private=False` and enforce the same.
+- Successful fetches cached in `.cache/` (JSON, keyed by URL sha1) as full
+  text with title/metadata; `--max-chars` truncates on output only.
 
 ## Search
 
