@@ -39,8 +39,10 @@
 
 ## Open decisions (John)
 
-- **Publish `ffwf-tau-search` 0.1.0 to PyPI?** Recommended. Tectum's `web` extra needs `ffwf-tau-search>=0.1.0`.
-- **Make dev.ffwf.net/john/tau-search world-readable?** Anonymous https returns 404, so forked installs from git fail.
+- **PyPI publish:** approved 2026-10-18.
+  - Prepared in eee0ea8: `.github/workflows/publish.yml` (trusted publishing over OIDC) and the PyPI metadata.
+  - The public-readiness audit found no secrets.
+  - John's steps: create GitHub `jmccardle/tau-search`; add pending publishers on PyPI and TestPyPI (workflow `publish.yml`, environments `pypi` and `testpypi`); pick a history option; move `v0.1.0` to a commit that contains the workflow.
 
 ## Decided
 
