@@ -70,14 +70,16 @@ services:
       JMFTS_API_TOKEN: ${JMFTS_API_TOKEN:-}
       # Registry rows are only ever searched with an explicit usetype, and an
       # explicit usetype overrides this list, so a registry-only appliance (what
-      # this is) would work without it. It is set because this is the operator
-      # config: if anything else is ever loaded here, the registry usetypes must stay out
-      # of default search. This is jmfts's default list (config.py
-      # search_exclude_usetypes) plus the four exact registry usetypes (exact match, not globs); setting the var
-      # REPLACES the default, so the defaults are repeated. Do NOT add the registry usetypes
-      # to JMFTS_BM25_EXCLUDE_USETYPES: that would empty the registry's own BM25 index.
+      # this is) would work without it. It is set anyway because this is the
+      # operator config: if anything else is ever loaded here, the registry
+      # usetypes must stay out of default search. The value is jmfts's default
+      # list (config.py search_exclude_usetypes) plus the four exact registry
+      # usetypes (matched exactly, not as globs). Setting the var REPLACES the
+      # default, so the defaults are repeated. Do NOT add the registry usetypes
+      # to JMFTS_BM25_EXCLUDE_USETYPES: that would empty the registry's own
+      # BM25 index.
       JMFTS_SEARCH_EXCLUDE_USETYPES: '["entity","entities","summary","derived","registry:root","registry:topic","registry:source","registry:manifest"]'
-    # Startup is: install, refuse an empty token, then init OR migrate, then serve.
+    # Startup is: install, refuse an empty token, then init OR check, then serve.
     #
     # `jmfts-init-db` is NOT idempotent: it skips CREATE DATABASE when the
     # database exists (the db service's POSTGRES_DB always creates it), but
@@ -86,19 +88,21 @@ services:
     # database has no `documents` table. Its schema load is one transaction, so
     # a failed first init rolls back clean and the next start retries; a real
     # init error exits non-zero and stops the container.
+    #
     # On later starts, `jmfts-init-db --pending` (exit 0 none, 1 some, 2 cannot
-    # tell, e.g. the database is ahead of the installed jmfts) lists unapplied
-    # migrations and applies nothing; we apply those, in order, each of which
-    # carries its own BEGIN/COMMIT and ledger row. Exit 2 or any SQL error
-    # stops the container. `pip install jmfts` is unpinned: pin it (jmfts==X)
-    # for a reproducible appliance.
+    # tell, e.g. the database is ahead of the installed jmfts) reports unapplied
+    # migrations. Applying a delta is a deliberate act, so we never apply one
+    # here: pending migrations stop the container with instructions.
+    #
+    # jmfts is pinned so that "pending" only appears when you change the pin.
+    # 0.7.0 is on PyPI and matches the jmfts v0.7.0 tag.
     entrypoint:
       - bash
       - -c
       - |
         set -euo pipefail
         : "$${JMFTS_API_TOKEN:?JMFTS_API_TOKEN is not set: export it before docker compose up, and use the same value for the presearch client}"
-        pip install --no-cache-dir jmfts
+        pip install --no-cache-dir jmfts==0.7.0
         rc=0
         python - <<'PY' || rc=$$?
         import sys, psycopg2
@@ -119,19 +123,16 @@ services:
               exit 1
             fi
             if [ -n "$$pending" ]; then
-              python - $$pending <<'PY'
-        import sys, psycopg2
-        from jmfts_core import sql
-        from jmfts_core.config import get_settings
-        s = get_settings()
-        conn = psycopg2.connect(host=s.db_host, port=s.db_port, user=s.db_user,
-                                password=s.db_password, dbname=s.db_name)
-        conn.autocommit = True  # each migration file carries its own BEGIN/COMMIT
-        cur = conn.cursor()
-        for name in sys.argv[1:]:
-            print("applying migration", name, flush=True)
-            cur.execute(sql.migration_sql(name))
-        PY
+              {
+                echo "jmfts has unapplied migrations, in application order:"
+                echo "$$pending"
+                echo "Apply them deliberately, one at a time, in that order. The files are"
+                echo "package data in the installed jmfts:"
+                echo "  $$(python -c 'import jmfts_core.sql as m, os; print(os.path.dirname(m.__file__))')/migrations/"
+                echo "  psql -h db -U <user> -d <name> -v ON_ERROR_STOP=1 -f <file>"
+                echo "then restart. Idempotent init/upgrade is upstream jmfts#50."
+              } >&2
+              exit 1
             fi
             ;;
           3) jmfts-init-db ;;
