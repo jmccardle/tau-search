@@ -9,9 +9,9 @@ Backends (all keyless, all plain HTTP):
   wikipedia  Wikipedia search API (entity-oriented, very stable)
 
 Usage:
-  python3 search.py "python 3.11 release notes"
-  python3 search.py "rust async" --backends ddg,mojeek --limit 5
-  python3 search.py "searxng" --json
+  tau-web-search "python 3.11 release notes"
+  tau-web-search "rust async" --backends ddg,mojeek --limit 5
+  tau-web-search "searxng" --json
 """
 
 import argparse
@@ -24,7 +24,7 @@ from urllib.parse import quote_plus, urljoin
 
 import requests
 from bs4 import BeautifulSoup
-import common
+from tau_search import common
 
 # Public SearXNG instances known to exist as of writing. Many disable the
 # JSON API; we try json first and fall back to HTML. The list is ordered

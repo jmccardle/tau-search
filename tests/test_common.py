@@ -4,7 +4,7 @@ import socket
 import unittest
 from unittest import mock
 
-import common
+from tau_search import common
 
 
 def _resolving(*addrs):

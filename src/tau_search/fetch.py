@@ -2,16 +2,16 @@
 """tau-search fetch: fetch a URL and print clean, truncated text.
 
 Usage:
-  python3 fetch.py URL [URL ...]
-  python3 fetch.py --no-cache --max-chars 4000 --show-meta URL
-  python3 fetch.py --json URL        # machine-readable output
+  tau-fetch URL [URL ...]
+  tau-fetch --no-cache --max-chars 4000 --show-meta URL
+  tau-fetch --json URL        # machine-readable output
 """
 
 import argparse
 import json
 import sys
 
-import common
+from tau_search import common
 
 
 def fetch_url(url, session, timeout, max_chars, use_cache=True,

@@ -1,4 +1,4 @@
-"""Shared plumbing for fetch.py and search.py.
+"""Shared plumbing for tau_search.fetch and tau_search.search.
 
 Tier-1 web access: plain HTTP GET, browser-like headers, hard timeouts,
 size caps, small disk cache. No JS, no cookies, no stealth.
@@ -13,9 +13,6 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup, Tag
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR = os.path.join(HERE, ".cache")
 
 DEFAULT_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -253,10 +250,21 @@ def is_private_host(hostname):
 CACHE_KEYS = {"url", "title", "content_type", "status", "text"}
 
 
+def cache_dir():
+    """Cache directory: $TAU_SEARCH_CACHE, else $XDG_CACHE_HOME/tau-search,
+    else ~/.cache/tau-search. Read on every call so tests can redirect it."""
+    explicit = os.environ.get("TAU_SEARCH_CACHE")
+    if explicit:
+        return explicit
+    base = (os.environ.get("XDG_CACHE_HOME")
+            or os.path.join(os.path.expanduser("~"), ".cache"))
+    return os.path.join(base, "tau-search")
+
+
 def _cache_path(url):
     # .json: entries from the old text-only scheme (.txt) are simply misses.
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()
-    return os.path.join(CACHE_DIR, digest + ".json")
+    return os.path.join(cache_dir(), digest + ".json")
 
 
 def cache_get(url):
@@ -282,7 +290,7 @@ def cache_set(url, entry):
     path = _cache_path(url)
     tmp = f"{path}.{os.getpid()}.tmp"
     try:
-        os.makedirs(CACHE_DIR, exist_ok=True)
+        os.makedirs(cache_dir(), exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(entry, f, ensure_ascii=False)
         os.replace(tmp, path)  # atomic: a reader never sees half an entry
