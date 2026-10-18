@@ -136,15 +136,19 @@ def render_fetch(value):
 
 # ----------------------------------------------------------------- plumbing
 
-def _aborted(ctx):
-    """True if the turn was aborted. Tau's guidance (tools/base.py) is that a
-    tool which sees its abort signal returns normally rather than failing, so
-    callers return an empty result. A running to_thread call cannot be
-    interrupted, so this is checked before the thread starts and after it
-    returns.
+def _raise_if_aborted(ctx, tool):
+    """Raise CancelledError if the turn was aborted, as tau's built-in bash and
+    find tools do: a returned value would be persisted and handed to nested
+    callers as a real result. A running to_thread call cannot be interrupted,
+    so this is checked before the thread starts and after it returns.
+
+    Known limitation (tau#35): under backgrounding ctx.signal is the issuing
+    turn's signal, not the job's, because tool_from_function drops the
+    per-call signal.
     """
     signal = ctx.signal
-    return signal is not None and signal.is_aborted()
+    if signal is not None and signal.is_aborted():
+        raise asyncio.CancelledError(f"{tool} aborted")
 
 
 def _search_blocking(query, backends, limit, local):
@@ -174,13 +178,10 @@ def register(api):
             raise ToolError("query is empty")
         if limit < 1:
             raise ToolError(f"limit must be >= 1, got {limit}")
-        empty = {"query": query, "results": [], "errors": []}
-        if _aborted(ctx):
-            return empty
+        _raise_if_aborted(ctx, "web_search")
         results, errors = await asyncio.to_thread(
             _search_blocking, query, backends, limit, searxng_url)
-        if _aborted(ctx):
-            return empty
+        _raise_if_aborted(ctx, "web_search")
         return {"query": query,
                 "results": [{"title": r["title"], "url": r["url"],
                              "snippet": r["snippet"], "backend": r["backend"]}
@@ -200,17 +201,12 @@ def register(api):
         """
         if max_chars < 1:
             raise ToolError(f"max_chars must be >= 1, got {max_chars}")
-        # An aborted fetch has no page: the fields are empty, not a failure.
-        empty = {"url": url, "requested": url, "title": "", "content_type": "",
-                 "status": 0, "source": "live", "text": "", "truncated": False}
-        if _aborted(ctx):
-            return empty
+        _raise_if_aborted(ctx, "web_fetch")
         try:
             r = await asyncio.to_thread(_fetch_blocking, url, max_chars)
         except common.FetchError as e:
             raise ToolError(str(e)) from e
-        if _aborted(ctx):
-            return empty
+        _raise_if_aborted(ctx, "web_fetch")
         return {"url": r["url"], "requested": r["requested"],
                 "title": r["title"], "content_type": r["content_type"],
                 "status": r["status"], "source": r["source"],

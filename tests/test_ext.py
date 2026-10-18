@@ -207,18 +207,17 @@ class WebSearch(unittest.TestCase):
 
 
 class Abort(unittest.TestCase):
-    def test_aborted_before_start_returns_normally_without_work(self):
+    def test_aborted_before_start_cancels_without_work(self):
         tools = registered()
         ctx = FakeCtx(FakeSignal(aborted=True))
         with mock.patch.object(ext.search, "run_query") as rq, \
                 mock.patch.object(ext.fetch, "fetch_url") as fu:
-            s = call(tools["web_search"], {"query": "q"}, ctx)
-            f = call(tools["web_fetch"], {"url": "http://public.test/"}, ctx)
+            with self.assertRaisesRegex(asyncio.CancelledError, "web_search aborted"):
+                call(tools["web_search"], {"query": "q"}, ctx)
+            with self.assertRaisesRegex(asyncio.CancelledError, "web_fetch aborted"):
+                call(tools["web_fetch"], {"url": "http://public.test/"}, ctx)
         rq.assert_not_called()
         fu.assert_not_called()
-        self.assertEqual(s["value"], {"query": "q", "results": [], "errors": []})
-        self.assertEqual(f["value"]["text"], "")
-        self.assertEqual(f["value"]["requested"], "http://public.test/")
 
     def test_aborted_while_the_thread_ran(self):
         tools = registered()
@@ -229,8 +228,8 @@ class Abort(unittest.TestCase):
             return [], []
 
         with mock.patch.object(ext.search, "run_query", side_effect=slow):
-            out = call(tools["web_search"], {"query": "q"}, FakeCtx(signal))
-        self.assertEqual(out["value"]["results"], [])
+            with self.assertRaisesRegex(asyncio.CancelledError, "web_search aborted"):
+                call(tools["web_search"], {"query": "q"}, FakeCtx(signal))
 
     def test_aborted_fetch_while_the_thread_ran(self):
         signal = FakeSignal()
@@ -240,9 +239,9 @@ class Abort(unittest.TestCase):
             return FETCHED
 
         with mock.patch.object(ext.fetch, "fetch_url", side_effect=slow):
-            out = call(registered()["web_fetch"], {"url": "http://public.test/"},
-                       FakeCtx(signal))
-        self.assertEqual(out["value"]["text"], "")
+            with self.assertRaisesRegex(asyncio.CancelledError, "web_fetch aborted"):
+                call(registered()["web_fetch"], {"url": "http://public.test/"},
+                     FakeCtx(signal))
 
     def test_no_signal_means_not_abortable(self):
         tools = registered()
