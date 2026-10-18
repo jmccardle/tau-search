@@ -21,7 +21,7 @@
     - 75 tests and `tests/check_loader.py` pass.
     - `ffwf-tau` 0.13.0 ran headless on `claude-haiku-5-5` and called both tools.
     - `docker build` passes.
-  - Gotcha: `--tools web_fetch` fails with `ValueError: Unknown tool: web_fetch` (`sdk.py:243`). The allowlist is resolved before extensions load, so use `--no-builtin-tools`.
+  - Gotcha: `--tools web_fetch` fails with `ValueError: Unknown tool: web_fetch` (`sdk.py:243`). The allowlist is resolved before extensions load, so use `--no-builtin-tools`. Filed as tau#43 (milestone 0.14.0).
 - **Fetch layer** (merge ee08560)
   - Full-text JSON cache with atomic writes.
   - Private hosts are refused, including every redirect hop and the cached final URL.
@@ -57,6 +57,7 @@
 
 - **tau#35:** entry-point loading and authorization. The config key changes in 0.14.0.
 - **tau#40:** `extension_owner()` mangles package-directory labels. Single-file `-e` is the only documented path until it's fixed.
+- **tau#43:** `--tools` can't name extension tools. Use `--no-builtin-tools` until it's fixed.
 - **jmfts#48:** no literal triples over REST. This blocks presearch `load` for literal predicates.
 - **jmfts#50:** `jmfts-init-db` isn't idempotent. Compose fails loudly on pending migrations.
 - **jmfts#49, #51–#55:** tracked upstream, non-blocking.
