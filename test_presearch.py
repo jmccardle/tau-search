@@ -9,7 +9,8 @@ import json
 import unittest
 from unittest import mock
 
-from presearch import broker
+from presearch import broker, cli
+from presearch.record import P_HOME_URL
 from presearch.jmfts import Jmfts, JmftsError
 from presearch.record import (P_COVERS_TOPIC, P_LISTED_BY, P_SEARCH_ENDPOINT,
                               Source, Topic, UT_SOURCE, UT_TOPIC)
@@ -229,6 +230,43 @@ class SearchTest(unittest.TestCase):
         self.assertTrue(all(p == {"index_name": "presearch"} for _, p in seen))
 
 
+class CliTest(unittest.TestCase):
+    def test_limit_and_sample_above_100_are_refused(self):
+        for argv in (["query", "x", "--limit", "150"],
+                     ["validate", "--sample", "500"]):
+            with self.assertRaises(SystemExit), \
+                    mock.patch("sys.stderr"):
+                cli.build_parser().parse_args(argv)
+
+    def test_limit_100_is_accepted(self):
+        args = cli.build_parser().parse_args(["query", "x", "--limit", "100"])
+        self.assertEqual(args.limit, 100)
+
+    def test_discover_accept_refuses_with_zero_requests(self):
+        class Prov:
+            def discover(self, topic, limit_domains=25):
+                yield Source(url="https://e.org", title="E",
+                             topic_keys=(topic,),
+                             facts={P_HOME_URL: "https://e.org"})
+
+        client = make_client()  # no routes: any request would raise
+        args = cli.build_parser().parse_args(
+            ["discover", "--topic", "Computers", "--accept"])
+        with mock.patch.object(cli, "_provider", return_value=Prov()), \
+                mock.patch.object(cli, "_client", return_value=client):
+            with self.assertRaises(JmftsError) as cm:
+                cli.cmd_discover(args)
+        self.assertIn("jmfts#48", str(cm.exception))
+        self.assertEqual(client.session.calls, [])
+
+    def test_sources_and_skeleton_use_dedup(self):
+        c = make_client()
+        c.session.on("POST", "/documents",
+                     lambda kw: FakeResponse(200, doc(1, "t", "x")))
+        c.create_document("t", "c", dedup=True)
+        self.assertEqual(c.session.calls[0][3], {"dedup": "true"})
+
+
 def registry_with_topics(descendants, subtree_status=200):
     c = make_client()
     reg = Registry(c, verbose=False)
@@ -292,6 +330,8 @@ class LiteralLoadTest(unittest.TestCase):
                      topic_keys=("Computers", "Other"))
         stats = reg.load_sources([src], manifest_id=2)
         self.assertEqual(stats["created"], 1)
+        self.assertEqual(s.calls_to("POST", "/documents")[0][3],
+                         {"dedup": "true"})
         self.assertEqual(len(s.calls_to("PUT", "/triples")), 2)
 
 

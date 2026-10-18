@@ -71,7 +71,7 @@ class Registry:
                          "tau-presearch. Topics form a subject taxonomy; "
                          "sources hang beneath them; manifests record which "
                          "upstream version each load came from."),
-                usetype=UT_ROOT))
+                usetype=UT_ROOT, dedup=True))
             self.log(f"created registry root id={self.root_id}")
 
         for attr, title in (("manifests_id", MANIFESTS_TITLE),
@@ -87,7 +87,7 @@ class Registry:
             if found is None:
                 found = _doc_id(self.j.create_document(
                     title=title, content=f"{title} for {ROOT_TITLE}.",
-                    parent_id=self.root_id, usetype=UT_ROOT))
+                    parent_id=self.root_id, usetype=UT_ROOT, dedup=True))
             setattr(self, attr, found)
         return self.root_id
 
@@ -105,6 +105,10 @@ class Registry:
         """
         if self._topic_ids:
             return self._topic_ids
+        # Cost note: subtree returns every descendant, sources included, so a
+        # reload's cost grows with the source count. children?depth=-1&usetype=
+        # would send only topics but was rejected: no offset (cannot page), a
+        # `limit` that truncates silently, and no 409 guard for an ingesting root.
         # SubtreeResponse{root, descendants: flat list, total}. Unbounded depth:
         # a max_depth here would silently drop deep topics and recreate them.
         # A still-ingesting root is a JmftsError (409), not an empty result.
@@ -192,7 +196,7 @@ class Registry:
             try:
                 doc_id = _doc_id(self.j.create_document(
                     title=src.title, content=f"{body}\n\n{src.url}",
-                    parent_id=parent_id, usetype=UT_SOURCE))
+                    parent_id=parent_id, usetype=UT_SOURCE, dedup=True))
                 for extra in src.topic_keys[1:]:
                     tid = self._topic_ids.get(extra)
                     if tid:

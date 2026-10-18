@@ -113,10 +113,14 @@ def plan(registry, query, limit=10, method="bm25", validate_first=True,
 
     # Topic hits tell us WHERE in the taxonomy the query lands; source hits
     # tell us WHAT to ask. Both come from the same lexical index.
-    # SearchRequest.limit is capped at 100 server-side; the source query
-    # over-fetches 3x so deeper tiers have candidates, up to that cap.
+    # `limit` is the caller's and is passed through as-is (the CLI refuses
+    # values over 100, and Jmfts.search raises rather than truncate). Only the
+    # source query's internal 3x over-fetch is capped at the server's 100:
+    # it is headroom for tier selection, not something the caller asked for,
+    # so when limit*3 > 100 the pool is just smaller and the caller still
+    # gets up to `limit` per tier from it.
     topic_hits = _rows(registry.j.search(
-        query, method=method, limit=min(limit, MAX_SEARCH_LIMIT),
+        query, method=method, limit=limit,
         usetype=UT_TOPIC, parent_id=registry.root_id, index_name=INDEX_NAME))
     source_hits = _rows(registry.j.search(
         query, method=method, limit=min(limit * 3, MAX_SEARCH_LIMIT),

@@ -39,6 +39,16 @@ def _progress(label):
     return report
 
 
+def _max_100(value):
+    """argparse type: the server caps SearchRequest.limit at 100; refuse more
+    rather than silently return fewer results than asked for."""
+    n = int(value)
+    if not 0 <= n <= 100:
+        raise argparse.ArgumentTypeError(
+            f"must be between 0 and 100 (JMFTS search limit), got {n}")
+    return n
+
+
 def _client(args):
     return Jmfts(base_url=args.jmfts, token=args.token)
 
@@ -170,18 +180,23 @@ def cmd_load(args):
 
 
 def cmd_discover(args):
-    reg = _registry(args)
     provider = _provider(args, "marginalia")
+    found = list(provider.discover(args.topic, limit_domains=args.limit))
+    if not found:
+        print("no candidate domains met the hit threshold")
+        return 1
+    if args.accept:
+        # jmfts#48: refuse before _registry(), which would create the root
+        # skeleton. Marginalia sources always carry home_url, so this fires.
+        for src in found:
+            Registry.check_loadable(src)
+
+    reg = _registry(args)
     reg._load_existing_topics()
     if args.topic not in reg._topic_ids:
         raise SystemExit(
             f"topic {args.topic!r} is not in the registry; load a taxonomy "
             "first (`presearch load curlie --topic-prefix ...`)")
-
-    found = list(provider.discover(args.topic, limit_domains=args.limit))
-    if not found:
-        print("no candidate domains met the hit threshold")
-        return 1
 
     for src in found:
         print(f"  {src.url}\n      {src.title}\n      {src.description[:160]}")
@@ -191,8 +206,6 @@ def cmd_discover(args):
               "them. Marginalia results are CC-BY-NC-SA 4.0.", file=sys.stderr)
         return 0
 
-    for src in found:
-        reg.check_loadable(src)  # jmfts#48: before the manifest is written
     manifest = Manifest(upstream=provider.upstream(), root_id=reg.root_id,
                         topics_loaded=0, sources_loaded=len(found),
                         selector=f"discover topic={args.topic}")
@@ -278,7 +291,7 @@ def build_parser():
     s.set_defaults(func=cmd_discover)
 
     s = sub.add_parser("validate", help="check the registry against upstream")
-    s.add_argument("--sample", type=int, default=25,
+    s.add_argument("--sample", type=_max_100, default=25,
                    help="source URLs to liveness-check (0 to skip)")
     s.add_argument("--tolerate", type=float, default=0.4,
                    help="dead fraction above which the registry is DEGRADED")
@@ -286,7 +299,7 @@ def build_parser():
 
     s = sub.add_parser("query", help="build a routing plan")
     s.add_argument("query")
-    s.add_argument("--limit", type=int, default=10)
+    s.add_argument("--limit", type=_max_100, default=10)
     s.add_argument("--method", default="bm25",
                    choices=["bm25", "fulltext", "hybrid", "vector"])
     s.add_argument("--tiers", type=int, default=3)

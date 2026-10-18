@@ -111,7 +111,7 @@ def sample_sources(registry, sample=25, tolerate=0.4, workers=8):
     third of what it lists is gone. `tolerate` is the dead fraction above
     which the registry is reported DEGRADED.
     """
-    hits = registry.j.search("http", method="bm25", limit=min(sample, 100),
+    hits = registry.j.search("http", method="bm25", limit=sample,
                              usetype=UT_SOURCE, parent_id=registry.root_id,
                              index_name=INDEX_NAME)
     rows = (hits or {}).get("results", []) if isinstance(hits, dict) else []

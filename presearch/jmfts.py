@@ -145,7 +145,7 @@ class Jmfts:
     # ---- documents -------------------------------------------------------
 
     def create_document(self, title, content, parent_id=None, usetype=None,
-                        auto_embed=False):
+                        auto_embed=False, dedup=False):
         """Create one document. auto_embed defaults False: the registry is a
         lexical index, and embedding 2.7M directory stubs would dominate the
         appliance for no measured gain.
@@ -154,6 +154,9 @@ class Jmfts:
         writes the row into the `default` BM25 index beside real content. The
         registry is searched through its own `presearch` index, which
         index_refresh rebuilds from the registered root's subtree.
+
+        dedup=True sends ?dedup=true: an identical (content, parent) document
+        is returned instead of inserted, so a reload does not duplicate it.
         """
         payload = {"content": content, "auto_embed": auto_embed,
                    "auto_index_bm25": False}
@@ -163,7 +166,8 @@ class Jmfts:
             payload["parent_id"] = parent_id
         if usetype is not None:
             payload["usetype"] = usetype
-        return self.post("/documents", payload)
+        return self.post("/documents", payload,
+                         params={"dedup": "true"} if dedup else None)
 
     def get_document(self, doc_id):
         return self.get(f"/documents/{doc_id}")
