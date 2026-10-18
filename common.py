@@ -58,6 +58,7 @@ def _redirect_guard(resp, *args, **kwargs):
     nxt = urljoin(resp.url, resp.headers.get("location", ""))
     why = refusal(nxt)
     if why:
+        resp.close()
         raise FetchError(f"redirect to {nxt} refused: {why}")
 
 
@@ -249,6 +250,9 @@ def is_private_host(hostname):
     return False
 
 
+CACHE_KEYS = {"url", "title", "content_type", "status", "text"}
+
+
 def _cache_path(url):
     # .json: entries from the old text-only scheme (.txt) are simply misses.
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()
@@ -264,22 +268,31 @@ def cache_get(url):
     except OSError:
         return None
     try:
-        return json.loads(raw)
+        entry = json.loads(raw)
     except ValueError as e:
         raise FetchError(f"corrupt cache entry {path}: {e}") from e
+    if not isinstance(entry, dict) or not CACHE_KEYS <= entry.keys():
+        raise FetchError(f"corrupt cache entry {path}: expected an object "
+                         f"with keys {sorted(CACHE_KEYS)}")
+    return entry
 
 
 def cache_set(url, entry):
     """Store the full (untruncated) entry dict for url."""
+    path = _cache_path(url)
+    tmp = f"{path}.{os.getpid()}.tmp"
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
-        path = _cache_path(url)
-        tmp = f"{path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(entry, f, ensure_ascii=False)
         os.replace(tmp, path)  # atomic: a reader never sees half an entry
     except OSError:
         pass  # cache is best-effort
+    finally:
+        try:
+            os.remove(tmp)  # only still there if the write or replace failed
+        except OSError:
+            pass
 
 
 def truncate(text, limit):

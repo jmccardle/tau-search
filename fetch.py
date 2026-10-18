@@ -30,6 +30,13 @@ def fetch_url(url, session, timeout, max_chars, use_cache=True,
     if use_cache:
         cached = common.cache_get(url)
         if cached is not None:
+            if not allow_private:
+                # The entry may have redirected somewhere private when it
+                # was fetched with allow_private.
+                why = common.refusal(cached["url"])
+                if why:
+                    raise common.FetchError(
+                        f"{url} refused: cached final URL {cached['url']}: {why}")
             return {"url": cached["url"], "requested": url, "source": "cache",
                     "title": cached["title"],
                     "content_type": cached["content_type"],

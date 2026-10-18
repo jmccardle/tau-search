@@ -4,6 +4,7 @@ Run: ./venv/bin/python -m unittest -v
 """
 
 import io
+import os
 import json
 import socket
 import tempfile
@@ -126,6 +127,29 @@ class Cache(Base):
         fetch.fetch_url(url, s, common.DEFAULT_TIMEOUT, 0, allow_private=True)
         with self.assertRaises(common.FetchError):
             fetch.fetch_url(url, s, common.DEFAULT_TIMEOUT, 0)
+
+
+    def test_cached_private_redirect_target_not_served_without_opt_in(self):
+        s, _ = _session({
+            "http://public.test/": (302, {"Location": "http://evil.test/"}, b""),
+            "http://evil.test/": (200, {"Content-Type": "text/plain"}, b"secret")})
+        fetch.fetch_url("http://public.test/", s, common.DEFAULT_TIMEOUT, 0,
+                        allow_private=True)
+        with self.assertRaisesRegex(common.FetchError, "cached final URL"):
+            fetch.fetch_url("http://public.test/", s, common.DEFAULT_TIMEOUT, 0)
+
+    def test_wrong_shape_entries_fail(self):
+        for raw in ("[]", "{}", '{"text": "x"}', '"s"'):
+            with self.subTest(raw=raw):
+                with open(common._cache_path("http://public.test/"), "w") as f:
+                    f.write(raw)
+                with self.assertRaisesRegex(common.FetchError, "corrupt cache entry"):
+                    common.cache_get("http://public.test/")
+
+    def test_cache_set_leaves_no_tmp_file_on_failure(self):
+        with self.assertRaises(TypeError):
+            common.cache_set("http://public.test/", {"text": object()})
+        self.assertEqual(os.listdir(common.CACHE_DIR), [])
 
 
 class Guard(Base):
