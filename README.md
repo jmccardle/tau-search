@@ -7,18 +7,33 @@ headless browser only when tier 1 genuinely fails.
 ## Setup
 
 ```sh
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
+pip install ffwf-tau-search        # from PyPI
+pip install -e .                   # or from a checkout
+```
+
+Requires Python 3.11+. This installs three console scripts (`tau-fetch`,
+`tau-web-search`, `presearch`) and a Tau extension (below). The package depends
+on `ffwf-tau-agent-core>=0.13.0` for the extension.
+
+The disk cache lives in `$TAU_SEARCH_CACHE`, else `$XDG_CACHE_HOME/tau-search`,
+else `~/.cache/tau-search`.
+
+To run the tests from a checkout:
+
+```sh
+python3.11 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/python -m unittest discover -s tests
 ```
 
 ## Fetch a URL
 
 ```sh
-./venv/bin/python fetch.py https://docs.python.org/3/whatsnew/3.11.html
-./venv/bin/python fetch.py --max-chars 2000 --show-meta URL
-./venv/bin/python fetch.py --json URL        # machine-readable
-./venv/bin/python fetch.py --no-cache URL    # skip disk cache
-./venv/bin/python fetch.py --allow-private http://127.0.0.1:8080/
+tau-fetch https://docs.python.org/3/whatsnew/3.11.html
+tau-fetch --max-chars 2000 --show-meta URL
+tau-fetch --json URL        # machine-readable
+tau-fetch --no-cache URL    # skip disk cache
+tau-fetch --allow-private http://127.0.0.1:8080/
 ```
 
 Behavior:
@@ -32,16 +47,16 @@ Behavior:
   `--allow-private`; every redirect hop is checked too, so a public URL
   cannot bounce you to 127.0.0.1 or 169.254.169.254. `common.http_get` and
   `fetch.fetch_url` take `allow_private=False` and enforce the same.
-- Successful fetches cached in `.cache/` (JSON, keyed by URL sha1) as full
-  text with title/metadata; `--max-chars` truncates on output only.
+- Successful fetches cached in the cache directory (see Setup) (JSON, keyed by URL sha1) as
+  full text with title/metadata; `--max-chars` truncates on output only.
 
 ## Search
 
 ```sh
-./venv/bin/python search.py "rust async tokio tutorial"
-./venv/bin/python search.py "rust async" --backends ddg,mojeek --limit 5
-./venv/bin/python search.py "searxng" --json
-./venv/bin/python search.py "query" --searxng-url http://127.0.0.1:8080
+tau-web-search "rust async tokio tutorial"
+tau-web-search "rust async" --backends ddg,mojeek --limit 5
+tau-web-search "searxng" --json
+tau-web-search "query" --searxng-url http://127.0.0.1:8080
 ```
 
 `--backends` takes a comma list (default: all, in the order below). Results
@@ -63,13 +78,75 @@ results. For reliability, run a local instance (docker searxng with JSON
 enabled) and point at it:
 
 ```sh
-SEARXNG_URL=http://127.0.0.1:8080 ./venv/bin/python search.py "query"
+SEARXNG_URL=http://127.0.0.1:8080 tau-web-search "query"
 # or: --searxng-url http://127.0.0.1:8080
 ```
 
+## Tau extension
+
+`tau_search.ext.search` registers two tools with [Tau](https://ffwfrobotics.github.io/tau/)
+(0.13.0 or later):
+
+| tool | what it does |
+|---|---|
+| `web_search(query, limit)` | keyless metasearch (the `tau-web-search` backends); returns title, url, snippet and backend per hit, plus per-backend errors |
+| `web_fetch(url, max_chars)` | fetch a URL as clean text; returns url, title, content type, status, `source` (`live`/`cache`), text and `truncated` |
+
+`web_fetch` only fetches public http(s) hosts. Private, loopback and
+link-local targets are refused, including via redirects, and no config key or
+parameter turns that off. Fetched text and search snippets reach the model
+under a header marking them as untrusted external content: data, not
+instructions. Tau has no untrusted-content policy of its own, so that marking
+is this extension's job.
+
+**Loading it (interim).** Tau 0.13.0 loads extensions by file path. Until
+tau#35 ships entry-point loading in tau 0.14.0, point `-e` at the installed
+file:
+
+```sh
+tau -e "$(python -c 'import tau_search.ext.search as m; print(m.__file__)')"
+```
+
+Use the single-file form: in 0.13.0 the package-directory form gets a mangled
+extension name (a reported tau bug). The package also declares a
+`tau.extensions` entry point (`search = "tau_search.ext.search"`); Tau ignores
+it until that issue lands.
+
+Under tau#35 an extension's identifier is its full Python module name, here
+`tau_search.ext.search`. Users will authorize it by distribution name and
+version (`ffwf-tau-search` and its version), and an update needs authorizing
+again. That arrives in tau 0.14.0.
+
+**Config** goes under `"extensions": {"search": {...}}` in `~/.tau/config.json`.
+That key is the file stem, which is what the interim `-e` single-file path
+uses. Under #35 the identifier becomes the module name, so the config key may
+change when tau 0.14.0 ships; check its release notes.
+Every key is optional and the defaults live in code; unknown keys and bad
+values fail the extension at load.
+
+```json
+{
+  "extensions": {
+    "search": {
+      "backends": ["ddg", "wikipedia"],
+      "searxng_url": "http://127.0.0.1:8080",
+      "limit": 5,
+      "max_chars": 8000
+    }
+  }
+}
+```
+
+| key | default | meaning |
+|---|---|---|
+| `backends` | all, in `tau-web-search` order | which search backends to use |
+| `searxng_url` | empty | local SearXNG base URL, tried first by the `searxng` backend |
+| `limit` | 5 | default max results per backend (a tool-call argument overrides) |
+| `max_chars` | 8000 | default cap on fetched text length (a tool-call argument overrides) |
+
 ## presearch — federated search over a JMFTS appliance
 
-`search.py` is **metasearch**: broadcast a query to every backend, merge the
+`tau-web-search` is **metasearch**: broadcast a query to every backend, merge the
 results. `presearch` is **federated search**: decide *which* sources to ask
 first, and ask those. The difference is a registry — a map from topics to
 sources, which the broker uses for resource selection.
@@ -174,19 +251,22 @@ migrations on later starts, and survives `down`/`up`; `down -v` wipes the data.
 ## Layout
 
 ```
-common.py    shared http fetch, html→text, cache, SSRF guard
-fetch.py     URL → clean text
-search.py    query → merged results from N backends
-.cache/      disk cache (url sha1 → text)
-
-presearch/
-  record.py      normalized Topic/Source/Upstream/Manifest
-  providers/     curlie, dmoz, wikidata (bulk); marginalia (discovery)
-  jmfts.py       REST client, with a preflight that fails before a load
-  registry.py    normalized records → JMFTS documents + triples
-  validate.py    does the registry still rest on its upstream?
-  broker.py      query → tiered routing plan (no network, deterministic)
-  cli.py         presearch <check|fetch|load|discover|validate|query|reindex>
+pyproject.toml
+src/tau_search/
+  common.py    shared http fetch, html→text, cache, SSRF guard
+  fetch.py     URL → clean text                    (tau-fetch)
+  search.py    query → merged results from N backends  (tau-web-search)
+  ext/
+    search.py  Tau extension: web_search, web_fetch
+  presearch/                                       (presearch)
+    record.py      normalized Topic/Source/Upstream/Manifest
+    providers/     curlie, dmoz, wikidata (bulk); marginalia (discovery)
+    jmfts.py       REST client, with a preflight that fails before a load
+    registry.py    normalized records → JMFTS documents + triples
+    validate.py    does the registry still rest on its upstream?
+    broker.py      query → tiered routing plan (no network, deterministic)
+    cli.py         presearch <check|fetch|load|discover|validate|query|reindex>
+tests/             stdlib unittest; check_loader.py drives tau's real loader
 ```
 
 ## Design notes

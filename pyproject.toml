@@ -25,7 +25,9 @@ presearch = "tau_search.presearch.cli:main"
 # PROVISIONAL: tau 0.13.0 ignores this group. Entry-point loading of
 # extensions is tau issue #35 (planned for tau 0.14.0); the group name and
 # value shape may change to match what lands. Until then, load the file by
-# path (see README).
+# path (see README). Under tau#35 the extension's identifier is its full
+# Python module name, "tau_search.ext.search"; users authorize it by
+# distribution name and version, and an update needs authorizing again.
 [project.entry-points."tau.extensions"]
 search = "tau_search.ext.search"
 
