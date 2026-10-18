@@ -39,15 +39,46 @@ def build_session(user_agent=DEFAULT_UA):
     return s
 
 
-def http_get(url, session=None, timeout=DEFAULT_TIMEOUT, max_bytes=MAX_BYTES):
+def refusal(url):
+    """Why url must not be fetched by default, or None. http(s) to public hosts only."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return f"only http and https are fetched, not {parts.scheme or 'no scheme'}"
+    if not parts.hostname:
+        return "the URL names no host"
+    if is_private_host(parts.hostname):
+        return f"{parts.hostname!r} is a private/loopback/non-public host"
+    return None
+
+
+def _redirect_guard(resp, *args, **kwargs):
+    """requests response hook: check each redirect target before it is followed."""
+    if not resp.is_redirect:
+        return
+    nxt = urljoin(resp.url, resp.headers.get("location", ""))
+    why = refusal(nxt)
+    if why:
+        raise FetchError(f"redirect to {nxt} refused: {why}")
+
+
+def http_get(url, session=None, timeout=DEFAULT_TIMEOUT, max_bytes=MAX_BYTES,
+             allow_private=False):
     """GET a URL. Returns (final_url, status, headers, body_bytes).
 
-    Raises FetchError on network failure, oversize body, or non-2xx.
+    Unless allow_private, the URL and every redirect hop must be http(s) to a
+    public host (SSRF guard). Raises FetchError on a refused URL, network
+    failure, oversize body, or non-2xx.
     """
     session = session or build_session()
+    hooks = None
+    if not allow_private:
+        why = refusal(url)
+        if why:
+            raise FetchError(f"{url} refused: {why}")
+        hooks = {"response": _redirect_guard}  # per-request: session is untouched
     try:
         resp = session.get(url, timeout=timeout, allow_redirects=True,
-                           stream=True)
+                           stream=True, hooks=hooks)
     except requests.RequestException as e:
         raise FetchError(f"request failed: {e}") from e
 
@@ -219,24 +250,34 @@ def is_private_host(hostname):
 
 
 def _cache_path(url):
+    # .json: entries from the old text-only scheme (.txt) are simply misses.
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()
-    return os.path.join(CACHE_DIR, digest + ".txt")
+    return os.path.join(CACHE_DIR, digest + ".json")
 
 
 def cache_get(url):
-    """Return cached text for url, or None."""
+    """Return the cached entry (dict: url, title, content_type, status, text) or None."""
+    path = _cache_path(url)
     try:
-        with open(_cache_path(url), "r", encoding="utf-8") as f:
-            return f.read()
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
     except OSError:
         return None
+    try:
+        return json.loads(raw)
+    except ValueError as e:
+        raise FetchError(f"corrupt cache entry {path}: {e}") from e
 
 
-def cache_set(url, text):
+def cache_set(url, entry):
+    """Store the full (untruncated) entry dict for url."""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
-        with open(_cache_path(url), "w", encoding="utf-8") as f:
-            f.write(text)
+        path = _cache_path(url)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(entry, f, ensure_ascii=False)
+        os.replace(tmp, path)  # atomic: a reader never sees half an entry
     except OSError:
         pass  # cache is best-effort
 

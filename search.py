@@ -174,11 +174,14 @@ def search_searxng(query, limit, session, timeout, local=None):
 
     last_err = "no instances"
     for base in bases:
+        # Only the user-configured instance may be on a private address.
+        priv = bool(local) and base == local.rstrip("/")
         # 1) JSON API (most instances disable it; cheap to try).
         try:
             url = (f"{base}/search?q={quote_plus(query)}"
                    f"&format=json&language=en")
-            final_url, status, headers, body = common.http_get(url, session, timeout)
+            final_url, status, headers, body = common.http_get(
+                url, session, timeout, allow_private=priv)
             if status == 200 and common.content_type(headers).endswith("json"):
                 data = json.loads(body.decode("utf-8", "replace"))
                 results = [
@@ -194,7 +197,8 @@ def search_searxng(query, limit, session, timeout, local=None):
         # 2) HTML SERP.
         try:
             url = f"{base}/search?q={quote_plus(query)}&language=en"
-            final_url, status, headers, body = common.http_get(url, session, timeout)
+            final_url, status, headers, body = common.http_get(
+                url, session, timeout, allow_private=priv)
             if status != 200:
                 last_err = f"{base}: HTTP {status}"
                 continue

@@ -14,20 +14,36 @@ import sys
 import common
 
 
-def fetch_url(url, session, timeout, max_chars, use_cache=True):
+def fetch_url(url, session, timeout, max_chars, use_cache=True,
+              allow_private=False):
+    """Fetch url and return a result dict; text is truncated to max_chars.
+
+    The cache holds the full text, so max_chars only shapes the output.
+    Unless allow_private, a private/non-http URL or redirect raises FetchError.
+    """
+    if not allow_private:
+        # Before the cache lookup: an entry fetched with allow_private must
+        # not be served to a caller that did not opt in.
+        why = common.refusal(url)
+        if why:
+            raise common.FetchError(f"{url} refused: {why}")
     if use_cache:
         cached = common.cache_get(url)
         if cached is not None:
-            return {"url": url, "source": "cache",
-                    "text": common.truncate(cached, max_chars)}
+            return {"url": cached["url"], "requested": url, "source": "cache",
+                    "title": cached["title"],
+                    "content_type": cached["content_type"],
+                    "status": cached["status"],
+                    "text": common.truncate(cached["text"], max_chars)}
 
-    final_url, status, headers, body = common.http_get(url, session=session,
-                                                       timeout=timeout)
+    final_url, status, headers, body = common.http_get(
+        url, session=session, timeout=timeout, allow_private=allow_private)
     ctype = common.content_type(headers)
     title, text = common.body_to_text(final_url, status, headers, body)
-    text = common.truncate(text, max_chars)
     if use_cache:
-        common.cache_set(url, text)
+        common.cache_set(url, {"url": final_url, "title": title,
+                               "content_type": ctype, "status": status,
+                               "text": text})
     return {
         "url": final_url,
         "requested": url,
@@ -35,7 +51,7 @@ def fetch_url(url, session, timeout, max_chars, use_cache=True):
         "title": title,
         "content_type": ctype,
         "status": status,
-        "text": text,
+        "text": common.truncate(text, max_chars),
     }
 
 
@@ -48,7 +64,8 @@ def main(argv=None):
     ap.add_argument("--no-cache", action="store_true",
                     help="neither read from nor write to the disk cache")
     ap.add_argument("--allow-private", action="store_true",
-                    help="fetch loopback/RFC1918/link-local hosts without a warning")
+                    help="allow loopback/RFC1918/link-local hosts (refused by default, "
+                         "including via redirects)")
     ap.add_argument("--timeout", type=float, default=None,
                     help="timeout in seconds (default: 10s connect, 25s read)")
     ap.add_argument("--show-meta", action="store_true",
@@ -62,12 +79,9 @@ def main(argv=None):
 
     failures = 0
     for url in args.urls:
-        host = common.urlsplit(url).hostname
-        if common.is_private_host(host) and not args.allow_private:
-            print(f"[warn] {url}: private/loopback host {host!r} "
-                  f"(pass --allow-private to silence)", file=sys.stderr)
         try:
-            result = fetch_url(url, session, timeout, args.max_chars, use_cache)
+            result = fetch_url(url, session, timeout, args.max_chars, use_cache,
+                               allow_private=args.allow_private)
         except common.FetchError as e:
             failures += 1
             if args.json:
