@@ -52,7 +52,14 @@ Branch `worktree-agent-afab9f112638baebd`:
   - Option A: merge now and fix tectum separately.
   - Option B: make the tectum change first, then merge. **Recommended.**
   - The tectum change is small: `from tau_search import common, fetch, search`, and drop `TECTUM_TAU_SEARCH_DIR`.
-- **tau#35(a):** whether directory drop-in extensions go through the same authorization as entry-point packages. I argued yes; tau-router argued for auto-load.
+- ~~**tau#35(a):**~~ Decided 2026-10-18: drop-ins and entry-point packages go through one authorization gate, and existing drop-ins are grandfathered.
+  - Drop-ins are still auto-discovered but need a path-based authorization record.
+  - Drop-ins are `.py` files or package directories, never wheels or zips.
+  - The identifier everywhere is the full dotted module name. The last-segment shorthand works only interactively and refuses if ambiguous.
+  - For tau-search in 0.14.0:
+    - config becomes `tau_search.ext.search:KEY=VALUE`, replacing the 0.13.0 stem key `search`;
+    - topics become `ext:tau_search.ext.search:<topic>`;
+    - update the README and the extension's config docs when tau 0.14.0 lands.
 
 ## External blockers
 
