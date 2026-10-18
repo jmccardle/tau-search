@@ -48,7 +48,10 @@ Branch `worktree-agent-afab9f112638baebd`:
 
 ## Open decisions (John)
 
-- **Merge order vs tectum.** The merge breaks `tectum/shim_cli.py:194-208`, which imports bare `common`/`fetch`/`search` from a checkout.
+- **Merge order vs tectum:** option B is underway in FFwF_Robotics/tectum#3. Hold the merge until tectum-arecibo says its branch is on master. Two calls are still John's:
+  - Publish `ffwf-tau-search` 0.1.0 to PyPI?
+  - Make the tau-search repo world-readable? Anonymous https currently returns 404, so a forked Tectum can't install it from git.
+- **Merge order vs tectum (background).** The merge breaks `tectum/shim_cli.py:194-208`, which imports bare `common`/`fetch`/`search` from a checkout.
   - Option A: merge now and fix tectum separately.
   - Option B: make the tectum change first, then merge. **Recommended.**
   - The tectum change is small: `from tau_search import common, fetch, search`, and drop `TECTUM_TAU_SEARCH_DIR`.
