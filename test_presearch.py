@@ -233,6 +233,7 @@ class SearchTest(unittest.TestCase):
 class CliTest(unittest.TestCase):
     def test_limit_and_sample_above_100_are_refused(self):
         for argv in (["query", "x", "--limit", "150"],
+                     ["query", "x", "--limit", "0"],
                      ["validate", "--sample", "500"]):
             with self.assertRaises(SystemExit), \
                     mock.patch("sys.stderr"):
@@ -242,8 +243,32 @@ class CliTest(unittest.TestCase):
         args = cli.build_parser().parse_args(["query", "x", "--limit", "100"])
         self.assertEqual(args.limit, 100)
 
-    def test_discover_accept_refuses_with_zero_requests(self):
+    def test_sample_zero_still_means_skip(self):
+        args = cli.build_parser().parse_args(["validate", "--sample", "0"])
+        self.assertEqual(args.sample, 0)
+
+    def test_discover_accept_refuses_before_any_request(self):
+        from presearch.providers.marginalia import MarginaliaProvider
+
+        client = make_client()  # no routes: any JMFTS request would raise
+        args = cli.build_parser().parse_args(
+            ["discover", "--topic", "Computers", "--accept"])
+        # Real provider, with the network layer booby-trapped.
+        with mock.patch.object(cli, "_client", return_value=client), \
+                mock.patch("requests.Session.request",
+                           side_effect=AssertionError("network used")), \
+                mock.patch("requests.get",
+                           side_effect=AssertionError("network used")):
+            with self.assertRaises(JmftsError) as cm:
+                cli.cmd_discover(args)
+        self.assertIn("jmfts#48", str(cm.exception))
+        self.assertEqual(client.session.calls, [])
+        self.assertTrue(MarginaliaProvider.ALWAYS_LITERAL)
+
+    def test_discover_accept_per_candidate_backstop(self):
         class Prov:
+            ALWAYS_LITERAL = frozenset()  # lies; the candidate check catches it
+
             def discover(self, topic, limit_domains=25):
                 yield Source(url="https://e.org", title="E",
                              topic_keys=(topic,),

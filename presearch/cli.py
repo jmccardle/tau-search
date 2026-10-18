@@ -19,8 +19,9 @@ import sys
 from . import broker as broker_mod
 from . import providers
 from . import validate as validate_mod
-from .jmfts import DEFAULT_TOKEN, DEFAULT_URL, Jmfts, JmftsError
-from .record import Manifest
+from .jmfts import (DEFAULT_TOKEN, DEFAULT_URL, LITERAL_UNSUPPORTED, Jmfts,
+                    JmftsError)
+from .record import LITERAL_PREDICATES, Manifest
 from .registry import Registry
 
 DEFAULT_DATA = os.environ.get("PRESEARCH_DATA", "./data")
@@ -39,14 +40,16 @@ def _progress(label):
     return report
 
 
-def _max_100(value):
-    """argparse type: the server caps SearchRequest.limit at 100; refuse more
-    rather than silently return fewer results than asked for."""
-    n = int(value)
-    if not 0 <= n <= 100:
-        raise argparse.ArgumentTypeError(
-            f"must be between 0 and 100 (JMFTS search limit), got {n}")
-    return n
+def _bounded(lo, hi=100):
+    """argparse type: the server caps SearchRequest.limit at 1..100; refuse
+    out-of-range values rather than silently return fewer results than asked."""
+    def parse(value):
+        n = int(value)
+        if not lo <= n <= hi:
+            raise argparse.ArgumentTypeError(
+                f"must be between {lo} and {hi} (JMFTS search limit), got {n}")
+        return n
+    return parse
 
 
 def _client(args):
@@ -181,6 +184,16 @@ def cmd_load(args):
 
 def cmd_discover(args):
     provider = _provider(args, "marginalia")
+    if args.accept:
+        # Static refusal first: querying Marginalia (a third-party request)
+        # for candidates that cannot be registered would be a pointless
+        # disclosure. The per-candidate check below stays as the backstop.
+        always = sorted(provider.ALWAYS_LITERAL & LITERAL_PREDICATES)
+        if always:
+            raise JmftsError(
+                f"discover --accept registers sources that always carry "
+                f"literal facts {always}: "
+                + LITERAL_UNSUPPORTED.format(predicate=always[0]))
     found = list(provider.discover(args.topic, limit_domains=args.limit))
     if not found:
         print("no candidate domains met the hit threshold")
@@ -291,7 +304,7 @@ def build_parser():
     s.set_defaults(func=cmd_discover)
 
     s = sub.add_parser("validate", help="check the registry against upstream")
-    s.add_argument("--sample", type=_max_100, default=25,
+    s.add_argument("--sample", type=_bounded(0), default=25,
                    help="source URLs to liveness-check (0 to skip)")
     s.add_argument("--tolerate", type=float, default=0.4,
                    help="dead fraction above which the registry is DEGRADED")
@@ -299,7 +312,7 @@ def build_parser():
 
     s = sub.add_parser("query", help="build a routing plan")
     s.add_argument("query")
-    s.add_argument("--limit", type=_max_100, default=10)
+    s.add_argument("--limit", type=_bounded(1), default=10)
     s.add_argument("--method", default="bm25",
                    choices=["bm25", "fulltext", "hybrid", "vector"])
     s.add_argument("--tiers", type=int, default=3)
