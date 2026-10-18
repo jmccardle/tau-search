@@ -12,14 +12,16 @@ JMFTS_API_URL / JMFTS_API_TOKEN.
 """
 
 import argparse
+import itertools
 import os
 import sys
 
 from . import broker as broker_mod
 from . import providers
 from . import validate as validate_mod
-from .jmfts import DEFAULT_TOKEN, DEFAULT_URL, Jmfts, JmftsError
-from .record import Manifest
+from .jmfts import (DEFAULT_TOKEN, DEFAULT_URL, LITERAL_UNSUPPORTED, Jmfts,
+                    JmftsError)
+from .record import LITERAL_PREDICATES, Manifest
 from .registry import Registry
 
 DEFAULT_DATA = os.environ.get("PRESEARCH_DATA", "./data")
@@ -36,6 +38,18 @@ def _progress(label):
         print(f"\r{label}: {pct}", end="", file=sys.stderr, flush=True)
 
     return report
+
+
+def _bounded(lo, hi=100):
+    """argparse type: the server caps SearchRequest.limit at 1..100; refuse
+    out-of-range values rather than silently return fewer results than asked."""
+    def parse(value):
+        n = int(value)
+        if not lo <= n <= hi:
+            raise argparse.ArgumentTypeError(
+                f"must be between {lo} and {hi} (JMFTS search limit), got {n}")
+        return n
+    return parse
 
 
 def _client(args):
@@ -75,10 +89,15 @@ def cmd_check(args):
     client = _client(args)
     caps = client.preflight()
     print(f"JMFTS at {args.jmfts}: reachable")
-    for key in ("version", "embedding_model", "retrieval_methods",
-                "ingest_usetypes", "held_out_usetypes"):
-        if key in caps:
-            print(f"  {key}: {caps[key]}")
+    # CapabilitiesResponse: version, retrieval{methods, *_exclude_usetypes}.
+    retrieval = caps.get("retrieval", {})
+    print(f"  version: {caps.get('version')}")
+    print(f"  retrieval methods: {retrieval.get('methods')}")
+    excluded = retrieval.get("search_exclude_usetypes") or []
+    print(f"  search_exclude_usetypes: {excluded}")
+    if not any(u.startswith("registry:") for u in excluded):
+        print("  note: registry:* usetypes are not held out of ordinary "
+              "search; see the README presearch section.")
     print("\nNote: the registry loads with auto_embed=False and needs only "
           "bm25/fulltext.")
     return 0
@@ -101,6 +120,17 @@ def cmd_load(args):
     if getattr(provider, "kind", "bulk") != "bulk":
         raise SystemExit(
             f"{args.provider} is a discovery provider; use `presearch discover`")
+
+    # Literal facts cannot be written yet (jmfts#48). Look at the first source
+    # before anything is written (even the registry skeleton), so a refused
+    # load leaves nothing behind. load_sources re-checks every later source.
+    sources = None
+    if not args.topics_only:
+        sources = iter(provider.sources())
+        first = next(sources, None)
+        if first is not None:
+            Registry.check_loadable(first)
+            sources = itertools.chain([first], sources)
 
     reg = _registry(args)
     reg.ensure_index()
@@ -127,19 +157,21 @@ def cmd_load(args):
                         selector=selector.strip())
     manifest_id = reg.write_manifest(manifest)
 
-    reg.log("loading sources ...")
-    stats = reg.load_sources(provider.sources(), manifest_id,
-                             workers=args.workers,
-                             max_sources=args.max_sources)
-    reg.log(f"sources: {stats['created']} created, "
-            f"{stats['skipped_no_topic']} skipped (topic filtered out), "
-            f"{stats['failed']} failed")
+    if args.topics_only:
+        stats = {"created": 0, "skipped_no_topic": 0, "failed": 0}
+    else:
+        reg.log("loading sources ...")
+        stats = reg.load_sources(sources, manifest_id, workers=args.workers,
+                                 max_sources=args.max_sources)
+        reg.log(f"sources: {stats['created']} created, "
+                f"{stats['skipped_no_topic']} skipped (topic filtered out), "
+                f"{stats['failed']} failed")
 
-    # Rewrite the manifest now that the real count is known.
-    final = Manifest(upstream=upstream, root_id=reg.root_id,
-                     topics_loaded=n_topics, sources_loaded=stats["created"],
-                     selector=selector.strip())
-    reg.write_manifest(final)
+    # The manifest was written before sources (their triples cite its id);
+    # now that the real count is known, update that one document in place.
+    reg.update_manifest(manifest_id, Manifest(
+        upstream=upstream, root_id=reg.root_id, topics_loaded=n_topics,
+        sources_loaded=stats["created"], selector=selector.strip()))
 
     if args.refresh_index:
         reg.log("refreshing bm25 index (rebuilds the whole index) ...")
@@ -151,18 +183,33 @@ def cmd_load(args):
 
 
 def cmd_discover(args):
-    reg = _registry(args)
     provider = _provider(args, "marginalia")
+    if args.accept:
+        # Static refusal first: querying Marginalia (a third-party request)
+        # for candidates that cannot be registered would be a pointless
+        # disclosure. The per-candidate check below stays as the backstop.
+        always = sorted(provider.ALWAYS_LITERAL & LITERAL_PREDICATES)
+        if always:
+            raise JmftsError(
+                f"discover --accept registers sources that always carry "
+                f"literal facts {always}: "
+                + LITERAL_UNSUPPORTED.format(predicate=always[0]))
+    found = list(provider.discover(args.topic, limit_domains=args.limit))
+    if not found:
+        print("no candidate domains met the hit threshold")
+        return 1
+    if args.accept:
+        # jmfts#48: refuse before _registry(), which would create the root
+        # skeleton. Marginalia sources always carry home_url, so this fires.
+        for src in found:
+            Registry.check_loadable(src)
+
+    reg = _registry(args)
     reg._load_existing_topics()
     if args.topic not in reg._topic_ids:
         raise SystemExit(
             f"topic {args.topic!r} is not in the registry; load a taxonomy "
             "first (`presearch load curlie --topic-prefix ...`)")
-
-    found = list(provider.discover(args.topic, limit_domains=args.limit))
-    if not found:
-        print("no candidate domains met the hit threshold")
-        return 1
 
     for src in found:
         print(f"  {src.url}\n      {src.title}\n      {src.description[:160]}")
@@ -241,6 +288,9 @@ def build_parser():
                    help="stop after N sources (0 = no limit; see the warning "
                         "in registry.load_sources before using 0 on Curlie)")
     s.add_argument("--workers", type=int, default=8)
+    s.add_argument("--topics-only", action="store_true",
+                   help="load the taxonomy without sources (sources are "
+                        "refused while literal facts are unwritable, jmfts#48)")
     s.add_argument("--refresh-index", action="store_true")
     s.set_defaults(func=cmd_load)
 
@@ -254,7 +304,7 @@ def build_parser():
     s.set_defaults(func=cmd_discover)
 
     s = sub.add_parser("validate", help="check the registry against upstream")
-    s.add_argument("--sample", type=int, default=25,
+    s.add_argument("--sample", type=_bounded(0), default=25,
                    help="source URLs to liveness-check (0 to skip)")
     s.add_argument("--tolerate", type=float, default=0.4,
                    help="dead fraction above which the registry is DEGRADED")
@@ -262,7 +312,7 @@ def build_parser():
 
     s = sub.add_parser("query", help="build a routing plan")
     s.add_argument("query")
-    s.add_argument("--limit", type=int, default=10)
+    s.add_argument("--limit", type=_bounded(1), default=10)
     s.add_argument("--method", default="bm25",
                    choices=["bm25", "fulltext", "hybrid", "vector"])
     s.add_argument("--tiers", type=int, default=3)

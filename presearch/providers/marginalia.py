@@ -40,6 +40,10 @@ LICENSE = "CC-BY-NC-SA 4.0"
 class MarginaliaProvider:
     kind = "discovery"
     name = NAME
+    # Literal predicates every source from discover() carries (see the facts
+    # below). Declared statically so the CLI can refuse a load that cannot
+    # succeed (jmfts#48) before making any outbound request.
+    ALWAYS_LITERAL = frozenset({P_HOME_URL, P_CAPABILITY, P_TEMPORAL})
 
     # The shared key queues behind every other consumer, so a generous read
     # timeout just converts rate limiting into a hang. Fail at 30s instead.

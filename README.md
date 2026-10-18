@@ -75,7 +75,7 @@ first, and ask those. The difference is a registry — a map from topics to
 sources, which the broker uses for resource selection.
 
 The registry is not a new database. It lives in a
-[JMFTS](https://pypi.org/project/jmfts/) appliance as a held-out corpus:
+[JMFTS](https://pypi.org/project/jmfts/) 0.7.0 appliance as a held-out corpus:
 topics are a document tree, sources hang beneath them, and facts about a
 source (search endpoint, subreddit, Stack Exchange tag) are triples with
 temporal validity, so a source that moves is superseded rather than
@@ -127,6 +127,35 @@ The registry loads with `auto_embed=False`. Matching a query to a category
 label is lexical work, and embedding 2.7M directory stubs would dominate the
 appliance for no measured gain. The `Computers` subtree at
 `--min-entries 5 --max-depth 4` is 1,448 topics and 19,295 sources.
+
+### Appliance setup and known gaps
+
+**Hold the registry out of ordinary search.** Registry rows are *not* held out
+by default: JMFTS's `search_exclude_usetypes` defaults to `entity`, `entities`,
+`summary`, `derived` (and `bm25_exclude_usetypes` adds `cell`). To keep
+registry rows from ranking against real content, set on the appliance, keeping
+the defaults:
+
+```sh
+JMFTS_SEARCH_EXCLUDE_USETYPES='["entity","entities","summary","derived","registry:root","registry:topic","registry:source","registry:manifest"]'
+```
+
+The value is a JSON array (pydantic-settings parses a `list[str]` from JSON),
+and entries are matched **exactly**, not as globs, so `registry:*` does not
+work. Do **not** add them to `JMFTS_BM25_EXCLUDE_USETYPES`: that is applied
+when a BM25 index is built and would leave the `presearch` index empty.
+presearch's own queries name the usetype, and a positive usetype filter
+overrides the exclusion list, so the broker is unaffected. Whether the
+appliance should hold out `registry:*` itself is an open upstream design
+question (jmfts#52).
+
+**Literal facts are not loadable yet.** `search_endpoint`, `subreddit`,
+`stack_exchange_tag` and the other literal-valued facts need literal triples,
+which JMFTS 0.7.0 cannot create over REST (`TripleCreate` requires
+`object_id`; jmfts#48). Every current provider attaches them to its sources,
+so `presearch load` and `discover --accept` refuse, before writing anything,
+until that lands. `presearch load <provider> --topics-only` loads the taxonomy
+alone.
 
 ### Container
 
