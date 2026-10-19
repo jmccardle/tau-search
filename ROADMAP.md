@@ -70,6 +70,22 @@
   - **Authorization:** `tau ext authorize ffwf-tau-search` is required. Headless and serve modes skip an unauthorized extension and print one line. Document this, and make `check_loader.py` or a new check drive the entry-point path.
   - **Allowlist:** `--tools web_fetch` works now (tau#43 fixed). Drop the `--no-builtin-tools` advice.
   - **Dependency floor:** raise to `ffwf-tau-agent-core>=0.14.0` only when 0.14.0 is on PyPI.
+  - **Live test, 2026-10-18:** tau `feat/ext-packages` @ 55a0028 plus `ffwf-tau-search==0.1.0` from PyPI, in a fresh venv and a throwaway tau home.
+    - **Passed:**
+      - Entry-point discovery: `tau ext list` shows `tau_search.ext.search ... package ffwf-tau-search 0.1.0 (entry point search)`.
+      - Headless (`-p`) and serve both log the "found but not loaded ... tau ext authorize tau_search.ext.search" line and continue.
+      - `tau ext authorize` works with both `search` and the full name, and so does `revoke`. The record stores distribution, version and RECORD digest.
+      - Haiku 5.5 called both tools with `--tools web_search,web_fetch`.
+      - `--ext-config tau_search.ext.search:limit=2` applied: two results came back with no `limit` argument.
+      - The old `search.limit=2` form fails at startup with a clear message.
+      - `-e tau_search.ext.search` resolves to the package.
+    - **Packaging:** no gap. The entry point names a module, as 0.14 requires.
+    - **Gaps for 0.2:**
+      1. The README's interim `tau -e "<installed .../tau_search/ext/search.py>"` breaks once the package is authorized. Tau loads both the entry point and the path (identifier `search`), and exits with `ValueError: Tool 'web_search' is already registered`. Replace it with `tau ext authorize tau_search.ext.search`, or `-e tau_search.ext.search`.
+      2. The README config key `search` becomes `tau_search.ext.search:KEY=VALUE`.
+      3. Config errors still say `search config: ...`. Name the extension `tau_search.ext.search` in them.
+      4. Drop the PROVISIONAL comment in pyproject and the `--no-builtin-tools` advice.
+    - **Tau-side observation:** the same file can load twice, under two identities (an entry point plus a `-e` path). Tau could detect that a path is an installed package's module and point the user to the package.
 
 - Run a live appliance test of the presearch CLI. This has never been run end to end.
 - When tau 0.14.0 lands, switch from `-e` to entry-point loading and update the config key docs.
