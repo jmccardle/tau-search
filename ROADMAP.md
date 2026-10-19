@@ -64,5 +64,12 @@
 
 ## Next
 
+- **Tau 0.14.0 compatibility plan**, from tau#35 on `feat/ext-packages` @ 55a0028, which is not merged. Don't start until John decides search-0.14-early.
+  - **Entry point:** the group is `tau.extensions` and the value must be a module. Our `search = "tau_search.ext.search"` already fits; drop the PROVISIONAL comment in pyproject.
+  - **Config:** `--ext-config tau_search.ext.search:KEY=VALUE`. The old stem form fails at startup. Update the README examples and the extension docstring.
+  - **Authorization:** `tau ext authorize ffwf-tau-search` is required. Headless and serve modes skip an unauthorized extension and print one line. Document this, and make `check_loader.py` or a new check drive the entry-point path.
+  - **Allowlist:** `--tools web_fetch` works now (tau#43 fixed). Drop the `--no-builtin-tools` advice.
+  - **Dependency floor:** raise to `ffwf-tau-agent-core>=0.14.0` only when 0.14.0 is on PyPI.
+
 - Run a live appliance test of the presearch CLI. This has never been run end to end.
 - When tau 0.14.0 lands, switch from `-e` to entry-point loading and update the config key docs.
